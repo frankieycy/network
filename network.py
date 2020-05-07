@@ -29,11 +29,14 @@ class graph:
             self.size = self.Adjacency.shape[0]
         else: # create random adjacency matrix
             self.size = size
-            self.Adjacency = np.zeros((self.size,self.size),dtype=int)
+            self.Adjacency = np.zeros((self.size,self.size),dtype=int) # matrix representation of connectivity
+            self.AdjacencyList = {i:[] for i in range(self.size)} # list representation of connectivity
             for i in range(self.size):
                 for j in range(i+1,self.size):
                     if np.random.uniform()<connectProb:
                         self.Adjacency[i][j] = self.Adjacency[j][i] = 1 # bidirectional
+                        self.AdjacencyList[i].append(j)
+                        self.AdjacencyList[j].append(i)
 
         # coupling matrix
         self.Coupling = self.coupling*self.Adjacency # uniform
@@ -122,6 +125,7 @@ class network(graph):
         return self.states_
 
     def setCovariance(self):
+        # dynamical covariance matrix from time series data
         print(' computing covariance matrix ...')
         self.setAvgStates()
 
@@ -148,47 +152,57 @@ class network(graph):
             self.avgStates_.append(avg)
 
     def estimateConnectivity(self):
+        # estimate adjacency matrix from covariance ratios
+        # paper: Extracting connectivity from dynamics of networks with uniform bidirectional coupling (2013)
         self.setCovariance()
 
         print(' estimating connectivity ...')
-        self.CovarianceInv = np.linalg.pinv(self.Covariance)
+        self.CovarianceInv = np.linalg.pinv(self.Covariance) # pseudoinverse
 
         self.CovarianceRatios = np.zeros((self.size,self.size))
         for i in range(self.size):
             for j in range(i+1,self.size):
+                # covariance ratio [i][j] = -1 / degrees [i] if i & j connected, 0 otherwise
                 self.CovarianceRatios[i][j] = self.CovarianceRatios[j][i] = self.CovarianceInv[i][j]/self.CovarianceInv[i][i]
 
         # self.plotCovarianceRatios()
 
         self.estAdjacency = np.zeros((self.size,self.size),dtype=int)
         for i in range(self.size):
+            # sort covariance ratios and corresponding indices
             sortedCovarianceRatios, sortedIdx = \
                 (list(t) for t in zip(*sorted(zip(self.CovarianceRatios[i], list(range(self.size))))))
+            # ratio differences to search for a large ratio "gap"
             diff = np.array(sortedCovarianceRatios[1:])-np.array(sortedCovarianceRatios[:-1])
 
-            sortedDiff = sorted(diff)
-            maxDiff = sortedDiff[-1]
-            secondMaxDiff = sortedDiff[-2]
-            maxDiffIdx = np.argmax(diff)
+            sortedDiff = sorted(diff) # ascending
+            maxDiff = sortedDiff[-1] # largest ratio difference
+            secondMaxDiff = sortedDiff[-2] # second largest ratio difference
+            maxDiffIdx = np.argmax(diff) # index corresponding to maxDiff
 
             if maxDiff>2*secondMaxDiff and self.CovarianceRatios[i][sortedIdx[maxDiffIdx]]<0:
+                # when gap is sufficiently large, we are done
                 connected = sortedIdx[:(maxDiffIdx+1)]
             else:
+                # when gap is not sufficiently large, look for ratios that sum to -1
                 cumsumCovRatios = np.cumsum(sortedCovarianceRatios)
                 for j in range(len(cumsumCovRatios)):
                     if cumsumCovRatios[j]<-1:
-                        maxDiffIdx = j
+                        maxDiffIdx = j # first index that leads to a ratio sum < -1
                         break
+                # check if previous index leads to a more accurate ratio sum ~ -1
                 if abs(cumsumCovRatios[maxDiffIdx-1]-(-1))<abs(cumsumCovRatios[maxDiffIdx]-(-1)):
                     maxDiffIdx -= 1
                 connected = sortedIdx[:(maxDiffIdx+1)]
 
-            for j in connected:
+            for j in connected: # all indices found to be connected to node i
                 self.estAdjacency[i][j] = 1
 
         print(self.estAdjacency)
 
     def plotCovarianceRatios(self):
+        # plot sorted covariance ratios for each node
+        # may check if an apparent gap exists in each plot
         print(' plotting covariance ratios ...')
         setUpFolder('plt','covRatios_*.png')
 
