@@ -94,7 +94,9 @@ class network(graph):
         self.Covariance = None
         self.CovarianceInv = None
         self.CovarianceRatios = None
-        self.estAdjacency = None
+        self.AdjacencyEst = None
+        self.AdjacencyAcc = None
+        self.AdjacencySimilarity = None
 
         if dynamicsFile: # load dynamics from file
             print(' loading time series data from %s ...'%dynamicsFile)
@@ -167,11 +169,16 @@ class network(graph):
 
         # self.plotCovarianceRatios()
 
-        self.estAdjacency = np.zeros((self.size,self.size),dtype=int)
+        self.AdjacencyEst = np.zeros((self.size,self.size),dtype=int)
+        self.AdjacencyAcc = [0]*self.size
         for i in range(self.size):
             # sort covariance ratios and corresponding indices
+            covarianceRatios = self.CovarianceRatios[i].tolist()
+            idx = list(range(self.size))
+            del covarianceRatios[i]
+            del idx[i]
             sortedCovarianceRatios, sortedIdx = \
-                (list(t) for t in zip(*sorted(zip(self.CovarianceRatios[i], list(range(self.size))))))
+                (list(t) for t in zip(*sorted(zip(covarianceRatios, idx))))
             # ratio differences to search for a large ratio "gap"
             diff = np.array(sortedCovarianceRatios[1:])-np.array(sortedCovarianceRatios[:-1])
 
@@ -195,10 +202,18 @@ class network(graph):
                     maxDiffIdx -= 1
                 connected = sortedIdx[:(maxDiffIdx+1)]
 
-            for j in connected: # all indices found to be connected to node i
-                self.estAdjacency[i][j] = 1
+            self.AdjacencyAcc[i] = (diff[maxDiffIdx]/((sortedCovarianceRatios[-1]-sortedCovarianceRatios[0])/(self.size-2)))
 
-        print(self.estAdjacency)
+            for j in connected: # all indices found to be connected to node i
+                if self.AdjacencyAcc[i]>self.AdjacencyAcc[j]:
+                    self.AdjacencyEst[i][j] = self.AdjacencyEst[j][i] = 1
+
+        # TMP: performance metrics
+        self.AdjacencySimilarity = np.sum(self.Adjacency==self.AdjacencyEst)/self.size**2
+
+        print(self.AdjacencyEst)
+        print(self.AdjacencyAcc)
+        print(self.AdjacencySimilarity)
 
     def plotCovarianceRatios(self):
         # plot sorted covariance ratios for each node
@@ -208,9 +223,11 @@ class network(graph):
 
         x = list(range(self.size))
         for i in range(self.size):
-            y = sorted(self.CovarianceRatios[i])
+            y,idx = (list(t) for t in zip(*sorted(zip(self.CovarianceRatios[i], x))))
             fig = plt.figure()
-            plt.scatter(x,y,c='k')
+            plt.scatter(x,y,c='k',s=10)
+            for j in range(self.size):
+                plt.annotate(idx[j],(x[j],y[j]))
             plt.ylabel('covariance ratio $r_{ij}$ of node $i=%d$'%i)
             fig.tight_layout()
             fig.savefig('plt/covRatios_%d.png'%i)
