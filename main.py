@@ -4,8 +4,10 @@ import network as n
 np.random.seed(0)
 
 s = 20 # network size
-g = n.network(size=s,connectProb=.2,noiseSigma=1) # generate random network
+g = n.network()
+g.randomUniformGraph(s,connectProb=.2) # generate random network
+g.initDynamics_Concensus(np.random.uniform(0,1,s),noiseSigma=1) # random initial conditions
 g.printAdjacency('adj.txt') # print adjacency matrix to file
-g.initDynamics(np.random.uniform(0,1,s)) # random initial conditions
-g.runDynamics(5e-4,1000) # iterate dynamics
+g.runDynamics(5e-4,100) # iterate dynamics
 g.estimateConnectivity() # estimate connectivity from time series data
+g.showAnalysis()
