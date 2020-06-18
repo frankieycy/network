@@ -1,3 +1,4 @@
+# search "##" for modifiable parameters
 import util
 import numpy as np
 import matplotlib.pyplot as plt
@@ -46,6 +47,13 @@ class graph:
         self.initialize()
 
     def initialize(self):
+        # adjacency list
+        self.AdjacencyList = {i:[] for i in range(self.size)}
+        for i in range(self.size):
+            for j in range(self.size):
+                if self.Adjacency[i][j]:
+                    self.AdjacencyList[i].append(j)
+
         # node degrees
         self.in_degrees = []
         self.out_degrees = []
@@ -81,15 +89,16 @@ class network(graph):
         pass
 
     def intrinsicFunc(self,r,x):
+        # intrinsic dynamics
         return r*x*(1-x)
 
     def couplingFunc_diffusive(self,x,y):
+        # diffusive coupling function
         return y-x
 
     def couplingFunc_synaptic(self,x,y):
-        beta1 = 2
-        beta2 = 0.5
-        y0 = 4
+        # synaptic coupling function
+        beta1,beta2,y0 = 2,0.5,4 ##
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
@@ -112,15 +121,15 @@ class network(graph):
         # changes as an np array
         WeightedCoupling = np.zeros((self.size,self.size))
         for i in range(self.size):
-            for j in range(self.size):
-                WeightedCoupling[i][j] = self.couplingFunc_synaptic(self.states[i],self.states[j])
+            WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states)
         WeightedCoupling *= self.Coupling
 
-        gaussianVector = np.random.exponential(size=self.size)*(2*(np.random.uniform(size=self.size)<0.5)-1)
+        randomVector = np.random.normal(size=self.size)
+        # randomVector = np.random.exponential(size=self.size)*(2*(np.random.uniform(size=self.size)<0.5)-1)
 
         changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
             WeightedCoupling.sum(axis=1))*self.timeStep+\
-            self.noiseCovariance.dot(gaussianVector)*np.sqrt(self.timeStep)
+            self.noiseCovariance.dot(randomVector)*np.sqrt(self.timeStep)
 
         return changes
 
@@ -129,8 +138,7 @@ class network(graph):
         self.timeStep = timeStep
         self.endTime = timeStep*totIter
         while self.iter<totIter:
-            changes = self.getStateChanges()
-            self.states += changes
+            self.states += self.getStateChanges()
             for i in range(self.size):
                 self.states_[i].append(self.states[i])
             self.time += self.timeStep
