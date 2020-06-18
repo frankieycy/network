@@ -1,13 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import network as n
+import network_dynamics as n
 np.random.seed(0)
 
-s = 20 # network size
-g = n.network()
-g.randomUniformGraph(s,connectProb=.2) # generate random network
-g.initDynamics_Concensus(np.random.uniform(0,1,s),noiseSigma=1) # random initial conditions
-g.printAdjacency('adj.txt') # print adjacency matrix to file
-g.runDynamics(5e-4,100) # iterate dynamics
-g.estimateConnectivity() # estimate connectivity from time series data
-g.showAnalysis()
+size = 20
+sigma = 1
+
+myNet = n.network()
+myNet.randomDirectedWeightedGraph(size,0.2,10,2)
+myNet.printAdjacency('adj.txt')
+myNet.printCoupling('cou.txt')
+myNet.initDynamics(np.random.uniform(0,5,size),[10]*size,sigma**2*np.eye(size))
+myNet.runDynamics(5e-4,2e3)
+myNet.plotDynamics('dyn.png')
+myNet.printDynamics('dyn.csv')
