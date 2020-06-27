@@ -2,6 +2,7 @@
 import util
 import numpy as np
 from scipy.linalg import logm,inv
+from time import time
 import matplotlib.pyplot as plt
 from matplotlib import rc
 rc('text', usetex=True)
@@ -34,26 +35,24 @@ class graph:
     def randomDirectedWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
         # random directed graph with with Gaussian couplings
         self.internalGraph = True
-
         self.size = size
-        self.Adjacency = np.zeros((self.size,self.size),dtype=int)
-        self.Coupling = np.zeros((self.size,self.size))
+        self.Adjacency = (np.random.uniform(size=(size,size))<connectProb).astype(int)
+        self.Coupling = np.random.normal(couplingMean,couplingSpread,size=(size,size))*self.Adjacency
+        self.initialize()
 
-        for i in range(self.size):
-            for j in range(self.size):
-                if np.random.uniform()<connectProb:
-                    self.Adjacency[i][j] = 1
-                    self.Coupling[i][j] = np.random.normal(couplingMean,couplingSpread)
-
+    def randomUnidirectedWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
+        # random uni-directed graph with with Gaussian couplings
+        self.internalGraph = True
+        self.size = size
+        self.Adjacency = np.triu((np.random.uniform(size=(size,size))<connectProb).astype(int),k=0)
+        self.Coupling = np.random.normal(couplingMean,couplingSpread,size=(size,size))*self.Adjacency
         self.initialize()
 
     def initialize(self):
         # adjacency list
         self.AdjacencyList = {i:[] for i in range(self.size)}
         for i in range(self.size):
-            for j in range(self.size):
-                if self.Adjacency[i][j]:
-                    self.AdjacencyList[i].append(j)
+            self.AdjacencyList[i] = np.argwhere(self.Adjacency[i]==1).flatten().tolist()
 
         # node degrees
         self.in_degrees = []
@@ -141,7 +140,7 @@ class network(graph):
         # changes as an np array
         WeightedCoupling = np.zeros((self.size,self.size))
         for i in range(self.size):
-            WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states)
+            WeightedCoupling[i] = self.couplingFunc_diffusive(self.states[i],self.states) ##
         WeightedCoupling *= self.Coupling
 
         randomVector = np.random.normal(size=self.size)
@@ -157,6 +156,7 @@ class network(graph):
         # iterate node states according to dynamical equations
         self.timeStep = timeStep
         self.endTime = timeStep*totIter
+        startTimer = time()
         while self.iter<totIter:
             self.states += self.getStateChanges()
             for i in range(self.size):
@@ -172,12 +172,19 @@ class network(graph):
                 for i in range(min(self.size,4)):
                     print('x%d = %6.2f | '%(i,self.states[i]),end='')
                 if self.size>4: print('...')
+        endTimer = time()
+        print('\n runDynamics() takes %d seconds'%(endTimer-startTimer))
+
+        self.states_np = np.zeros((self.size,self.iter))
+        for i in range(self.size):
+            self.states_np[i] = self.states_[i]
         self.statesLog.append(self.states_)
 
     def removeTransient(self, transientSteps):
         # remove (initial) transient states
         # look into dynamics plot to determine what to remove
         self.iter -= transientSteps
+        del self.time_[:transientSteps]
         for i in range(self.size):
             del self.states_[i][:transientSteps]
 
@@ -200,38 +207,39 @@ class network(graph):
     def calcInfoMatrix(self):
         # compute information matrix of network (theoretical)
         # diagonal entries not usable
+        print(' computing info matrix (Qij) ...')
         self.InfoMatrix = np.zeros((self.size,self.size))
         for i in range(self.size):
-            self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates)
+            self.InfoMatrix[i] = self.couplingFuncDerivY_diffusive(self.steadyStates[i],self.steadyStates) ##
         self.InfoMatrix *= self.Coupling
 
     def timeCovarianceMatrix(self, shift=0):
         # compute time covariance matrix
         # shift = multiple of time step
-        states_ = np.zeros((self.size,self.iter))
-        for i in range(self.size):
-            states_[i] = self.states_[i]
-
         matrixSum = 0
         for t in range(self.iter-shift):
-            matrixSum += np.outer(states_[:,t]-self.avgStates,states_[:,t+shift]-self.avgStates)
-
+            matrixSum += np.outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
         return matrixSum/(self.iter-shift)
 
     def estInfoMatrix(self):
         # estimate information matrix of network (empirical)
         # should approx InfoMatrix, compare via plotInfoMatrix
-        return logm(self.timeCovarianceMatrix(1).dot(inv(self.timeCovarianceMatrix(0))))/self.timeStep
+        print(' estimating info matrix (Mij) ...')
+        K_tau = self.timeCovarianceMatrix(1)
+        K_0 = self.timeCovarianceMatrix(0)
+        self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
 
     def plotInfoMatrix(self, file, title=None):
         # plot information matrix: theoretical vs empirical
+        # REQUIRE: calcInfoMatrix() and estInfoMatrix() beforehand
+        print(' plotting info matrix (Qij vs Mij) to %s ...'%file)
         Q = self.InfoMatrix
-        M = self.estInfoMatrix()
+        M = self.InfoMatrix_est
+        Q = Q[~np.eye(Q.shape[0],dtype=bool)].reshape(Q.shape[0],-1).flatten()
+        M = M[~np.eye(M.shape[0],dtype=bool)].reshape(M.shape[0],-1).flatten()
 
         fig = plt.figure()
-        for i in range(self.size):
-            for j in range(self.size):
-                if i!=j: plt.scatter(Q[i][j],M[i][j],s=1,c='k')
+        plt.scatter(Q,M,s=1,c='k')
         if title: plt.title(title)
         plt.xlabel('$Q_{ij}$')
         plt.ylabel('$M_{ij}$')
@@ -243,7 +251,7 @@ class network(graph):
         # avoid if large dataset
         print(' plotting dynamics to %s ...'%file)
         fig = plt.figure(figsize=(12,6))
-        plt.xlim(0,self.time)
+        plt.xlim(np.min(self.time_),np.max(self.time_))
         if not nodes: nodes = range(self.size)
         for i in nodes: plt.plot(self.time_,self.states_[i])
         if title: plt.title(title)

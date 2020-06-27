@@ -1,31 +1,30 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import network_dynamics as n
-np.random.seed(0)
+# np.random.seed(0)
 
-size = 20
+size = 100
 sigma = 1
+dt = 5e-4
+w = [10,2]
+r = [50]*size
+ic = np.random.uniform(0,5,size)
 
 myNet = n.network()
-myNet.randomDirectedWeightedGraph(size,0.2,10,2)
+myNet.randomUnidirectedWeightedGraph(size,0.2,w[0],w[1])
 
 # noise-free network for steady states
-myNet.initDynamics(np.random.uniform(0,5,size),[10]*size,np.zeros((size,size)))
-myNet.runDynamics(5e-4,2e3)
+myNet.initDynamics(ic,r,np.zeros((size,size)))
+myNet.runDynamics(dt,2e3)
 myNet.setSteadyStates()
 
-myNet.initDynamics(np.random.uniform(0,5,size),[10]*size,sigma**2*np.eye(size))
-myNet.runDynamics(5e-4,2e4)
-# myNet.plotDynamics('dyn.png')
+myNet.initDynamics(ic,r,sigma**2*np.eye(size))
+myNet.runDynamics(dt,2e5)
 myNet.removeTransient(400)
+# myNet.plotDynamics('dyn.png')
+
 myNet.calcTimeAvg()
 myNet.calcInfoMatrix()
-myNet.plotInfoMatrix('QvsM.png')
-
-################################################################################
-# myNet.printAdjacency('adj.txt')
-# myNet.printCoupling('cou.txt')
-# myNet.initDynamics(np.random.uniform(0,5,size),[10]*size,sigma**2*np.eye(size))
-# myNet.runDynamics(5e-4,2e3)
-# myNet.plotDynamics('dyn.png')
-# myNet.printDynamics('dyn.csv')
+myNet.estInfoMatrix()
+myNet.plotInfoMatrix('QvsM.png','size $=%d$, weight $\sim N(%d,%d)$, $r_i = %d$, %s coupling'\
+    %(size,w[0],w[1],r[0],'diffusive'))

@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last: 26/6/2020
+* last: 27/6/2020
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuronal dynamics from model
 
@@ -20,8 +20,9 @@
 * parameters (``main.py``):
     - size = 100, connection probability = 0.2, weights ~ N(10,2), noise sigma = 1
     - initial conditions: uniform[0,5]
-    - time step = 5e-4, total time steps = 2e3
+    - time step = 5e-4, total time steps = 2e5
     - synaptic coupling function: beta1,beta2,y0 = 2,0.5,4
+    - subject to modifications for different test cases
 * experimental observation of neurons:
     - non-uniform spiking
     - some larger activity, some smaller
