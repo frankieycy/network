@@ -69,29 +69,15 @@ class graph:
         # check if adjacency matrix is symmetric
         return np.allclose(self.Adjacency,self.Adjacency.T,0,0)
 
-    def printAdjacency(self, file, cm=None):
+    def printAdjacency(self, file, cm=''):
         # print adjacency matrix to file
-        f = open(file,'w')
-        if cm: f.write(cm) # some notes
-        f.write('# adjacency matrix of size %d\n'%self.size)
-        for row in self.Adjacency:
-            for val in row[:-1]:
-                f.write('%d '%val)
-            f.write('%d\n'%row[-1])
-        f.close()
+        np.savetxt(file,self.Adjacency,fmt="%d",header=cm)
 
-    def printCoupling(self, file, cm=None):
+    def printCoupling(self, file, cm=''):
         # print coupling matrix to file
-        f = open(file,'w')
-        if cm: f.write(cm) # some notes
-        f.write('# coupling matrix of size %d\n'%self.size)
-        for row in self.Coupling:
-            for val in row[:-1]:
-                f.write('%.4f '%val)
-            f.write('%.4f\n'%row[-1])
-        f.close()
+        np.savetxt(file,self.Coupling,fmt="%.4f",header=cm)
 
-################################################################################
+#==============================================================================#
 
 class network(graph):
     # CONVENTION: underscore refers to a time series
@@ -112,12 +98,12 @@ class network(graph):
 
     def couplingFunc_synaptic(self,x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,4 ##
+        beta1,beta2,y0 = 0.1,0.5,4 ##
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
     def couplingFuncDerivY_synaptic(self,x,y):
         # y-derivative of synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,4 ##
+        beta1,beta2,y0 = 0.1,0.5,4 ##
         return beta2/beta1*np.cosh(beta2*(y-y0))**-2
 
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
@@ -140,11 +126,11 @@ class network(graph):
         # changes as an np array
         WeightedCoupling = np.zeros((self.size,self.size))
         for i in range(self.size):
-            WeightedCoupling[i] = self.couplingFunc_diffusive(self.states[i],self.states) ##
+            WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
         WeightedCoupling *= self.Coupling
 
-        randomVector = np.random.normal(size=self.size)
-        # randomVector = np.random.exponential(size=self.size)*(2*(np.random.uniform(size=self.size)<0.5)-1)
+        randomVector = np.random.normal(size=self.size) ##
+        # randomVector = np.random.exponential(3,size=self.size)*np.where(np.random.uniform(size=self.size)<0.5,-1,1)
 
         changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
             WeightedCoupling.sum(axis=1))*self.timeStep+\
@@ -210,7 +196,7 @@ class network(graph):
         print(' computing info matrix (Qij) ...')
         self.InfoMatrix = np.zeros((self.size,self.size))
         for i in range(self.size):
-            self.InfoMatrix[i] = self.couplingFuncDerivY_diffusive(self.steadyStates[i],self.steadyStates) ##
+            self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
         self.InfoMatrix *= self.Coupling
 
     def timeCovarianceMatrix(self, shift=0):
@@ -246,14 +232,16 @@ class network(graph):
         fig.tight_layout()
         fig.savefig(file)
 
-    def plotDynamics(self, file, title=None, nodes=None):
+    def plotDynamics(self, file, title=None, nodes=None, color='', withSteadyStates=False):
         # plot time series data to file
         # avoid if large dataset
         print(' plotting dynamics to %s ...'%file)
         fig = plt.figure(figsize=(12,6))
         plt.xlim(np.min(self.time_),np.max(self.time_))
         if not nodes: nodes = range(self.size)
-        for i in nodes: plt.plot(self.time_,self.states_[i])
+        for i in nodes:
+            plt.plot(self.time_,self.states_[i],color)
+            if withSteadyStates: plt.axhline(y=self.steadyStates[i],c=color,ls='--')
         if title: plt.title(title)
         plt.xlabel('time $t$')
         plt.ylabel('states $\\{x_j\\}_{1:%d}$'%self.size)
@@ -265,12 +253,6 @@ class network(graph):
         # print time series data to file (csv format)
         # avoid if large dataset
         print(' printing dynamics to %s ...'%file)
-        f = open(file, 'w')
-        f.write('time,')
-        for i in range(self.size-1): f.write('%d,'%i)
-        f.write('%d\n'%(self.size-1))
-        for t in range(self.iter):
-            f.write('%.4f,'%(t*self.timeStep))
-            for i in range(self.size-1): f.write('%.4f,'%self.states_[i][t])
-            f.write('%.4f\n'%self.states_[self.size-1][t])
-        f.close()
+        data = np.vstack((self.time_,self.states_np)).transpose()
+        head = 't,'+','.join(map(str,range(self.size)))
+        np.savetxt(file,data,delimiter=',',fmt="%.4f",header=head,comments='')
