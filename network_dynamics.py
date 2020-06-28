@@ -1,7 +1,9 @@
+# Project 2a - (FYP Prelim) simulated dynamics, connection extraction
 # search '##' for modifiable parameters
 import util
 import numpy as np
 from scipy.linalg import logm,inv
+from scipy.stats import gaussian_kde
 from time import time
 import matplotlib.pyplot as plt
 from matplotlib import rc
@@ -152,12 +154,11 @@ class network(graph):
             self.iter += 1
 
             if silent:
-                print(' t = %6.2f | %c %.2f %%\r'%(self.time,util.progressBars[self.iter%4],100*self.time/self.endTime),end='')
+                print(' t = %7.2f | %c %.2f %%\r'%(self.time,util.progressBars[self.iter%4],100*self.time/self.endTime),end='')
             elif self.iter%100==0:
-                print(' t = %6.2f | '%self.time,end='')
-                for i in range(min(self.size,4)):
-                    print('x%d = %6.2f | '%(i,self.states[i]),end='')
-                if self.size>4: print('...')
+                print(' t = %7.2f/%7.2f | '%(self.time,self.endTime)+\
+                    ' | '.join(['x%d = %7.2f'%(i,x) for i,x in enumerate(self.states)][0:min(4,self.size)]),end='')
+                if self.size>4: print(' ...')
         endTimer = time()
         print('\n runDynamics() takes %d seconds'%(endTimer-startTimer))
 
@@ -229,6 +230,28 @@ class network(graph):
         if title: plt.title(title)
         plt.xlabel('$Q_{ij}$')
         plt.ylabel('$M_{ij}$')
+        fig.tight_layout()
+        fig.savefig(file)
+
+    def plotEstInfoMatrix(self, file, title=None):
+        # plot estimated information matrix: distribution
+        print(' plotting estimated info matrix (Mij distribution) to %s ...'%file)
+        M = self.InfoMatrix_est
+        M = M[~np.eye(M.shape[0],dtype=bool)].reshape(M.shape[0],-1).flatten()
+        mean = np.mean(M)
+        sd = np.std(M)
+
+        fig = plt.figure()
+        x = np.linspace(np.min(M),np.max(M),100)
+        density = gaussian_kde(M)
+        plt.plot(x,density(x),'k',label='$\sigma=%.1f$'%sd)
+        plt.scatter(M,[0]*len(M),s=5,c='k')
+        plt.axvline(x=-sd,c='k',ls='--')
+        plt.axvline(x=+sd,c='k',ls='--')
+        plt.ylim(bottom=0)
+        if title: plt.title(title)
+        plt.xlabel('$M_{ij}$')
+        plt.legend()
         fig.tight_layout()
         fig.savefig(file)
 

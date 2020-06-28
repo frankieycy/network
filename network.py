@@ -1,3 +1,4 @@
+# Project 1 - toy model
 import util
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,9 +7,9 @@ rc('text', usetex=True)
 
 class graph:
     def __init__(self):
-        pass
+        self.internalGraph = False  # graph is internally generated
 
-    def load(self, adjacencyFile, couplingFile=None, coupling=1):
+    def loadGraph(self, adjacencyFile, couplingFile=None, coupling=1):
         # load adjacency matrix from file
         print(' loading adjacency file from %s ...'%adjacencyFile)
         self.Adjacency = np.loadtxt(adjacencyFile,dtype=int,delimiter=' ',comments='#')
@@ -31,7 +32,7 @@ class graph:
 
     def randomUniformGraph(self, size, connectProb, coupling=1):
         # random bidirectional graph with uniform coupling
-        self.internalGraph = True # graph is internally generated
+        self.internalGraph = True
 
         self.size = size
         self.coupling = coupling
@@ -48,7 +49,7 @@ class graph:
 
     def randomWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
         # random bidirectional graph with with Gaussian couplings
-        self.internalGraph = True # graph is internally generated
+        self.internalGraph = True
 
         self.size = size
         self.Adjacency = np.zeros((self.size,self.size),dtype=int)
@@ -74,11 +75,24 @@ class graph:
         for i in range(self.size):
             self.degrees.append(sum(self.Adjacency[i]))
 
-        # Laplacian matrix
-        self.laplacian = np.zeros((self.size,self.size))
+        # node strengths
+        self.strengths = []
         for i in range(self.size):
-            self.laplacian[i][i] = self.degrees[i]
-        self.laplacian -= self.Adjacency
+            self.strengths.append(np.array(self.Coupling[i]).dot(self.Adjacency[i]))
+        self.avgStength = sum(self.strengths)/np.sum(self.Adjacency)
+
+        # Laplacian matrix
+        self.Laplacian = np.zeros((self.size,self.size))
+        for i in range(self.size):
+            self.Laplacian[i][i] = self.degrees[i]
+        self.Laplacian -= self.Adjacency
+
+        # weighted Laplacian matrix
+        self.weightedLaplacian = np.zeros((self.size,self.size))
+        for i in range(self.size):
+            self.weightedLaplacian[i][i] = self.strengths[i]
+        self.weightedLaplacian -= self.Coupling*self.Adjacency
+        self.weightedLaplacian /= self.avgStength
 
     def printAdjacency(self, file, cm=None):
         # print adjacency matrix to file
@@ -102,8 +116,40 @@ class graph:
             f.write('%.4f\n'%row[-1])
         f.close()
 
+    def plotDegreeDistribution(self, file, bins=10):
+        # distribution of node degrees
+        fig = plt.figure()
+        plt.hist(self.degrees,bins=bins,density=True,color='k')
+        plt.title(r"$\mu=%.2f, \sigma=%.2f"%(np.mean(self.degrees),np.std(self.degrees)))
+        plt.xlabel("node degrees $k_i$")
+        fig.tight_layout()
+        fig.savefig(file)
+
+    def plotStengthDistribution(self, file, bins=10):
+        # distribution of node strengths
+        fig = plt.figure()
+        plt.hist(self.strengths,bins=bins,density=True,color='k')
+        plt.title(r"$\mu=%.2f, \sigma=%.2f"%(np.mean(self.strengths),np.std(self.strengths)))
+        plt.xlabel("node strength $s_i$")
+        fig.tight_layout()
+        fig.savefig(file)
+
     def isConnected(self):
-        pass
+        # connected graph or not
+        closedSize = 0
+        closed = [False]*self.size
+        open = [False]*self.size
+        open[0] = True
+        while(closedSize<self.size):
+            oldSize = closedSize
+            for i in range(self.size):
+                if open[i] and not closed[i]:
+                    closed[i] = True
+                    closedSize += 1
+                    for j in self.AdjacencyList[i]:
+                        open[j] = True
+            if oldSize == closedSize: return False
+        return True
 
     def shortestPaths(self, origin):
         pass
@@ -144,7 +190,7 @@ class network(graph):
         # instantaneous node rates
         # node states obey CONSENSUS DYNAMICS: dx_i/dt = -g sum_j L_ij * x_j + eta_j
         # rates as an np array
-        return -self.coupling*self.laplacian.dot(self.states)+\
+        return -self.coupling*self.Laplacian.dot(self.states)+\
             np.random.normal(0,self.noiseSigma,self.size)
 
     def runDynamics(self, timeStep, endTime, silent=True):
