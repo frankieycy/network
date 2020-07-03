@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last: 28/6/2020
+* last: 3/7/2020
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuronal dynamics from model
 
@@ -20,12 +20,13 @@
 * parameters (see ``main.py``):
     - random directed weighted graph
     - size = 100, connection probability = 0.2, weights ~ N(10,2), noise sigma = 1
-    - synaptic coupling function: beta1,beta2,y0 = 0.1,0.5,4
+    - intrinsic dynamics coefficient: r_i = 10
+    - synaptic coupling function: beta1,beta2,y0 = 2,0.5,4
     - initial conditions: uniform[0,5]
-    - time step = 5e-4, total time steps = 2e5
+    - step size = 5e-4, time steps = 2e6
     - subject to modifications for different test cases
 * experimental observation of neurons:
     - non-uniform spiking
     - some larger activity, some smaller
-* goal: replicate neuronal dynamics with model-estimated links and weights
+* *goal: replicate neuronal dynamics with model-estimated links and weights*
 * code: ``network_dynamics.py``

@@ -67,18 +67,24 @@ class graph:
 
     def printAdjacency(self, file, cm=''):
         # print adjacency matrix to file
-        np.savetxt(file,self.Adjacency,fmt="%d",header=cm)
+        np.savetxt(file,self.Adjacency,fmt='%d',header=cm)
 
     def printCoupling(self, file, cm=''):
         # print coupling matrix to file
-        np.savetxt(file,self.Coupling,fmt="%.4f",header=cm)
+        np.savetxt(file,self.Coupling,fmt='%.4f',header=cm)
 
 #==============================================================================#
 
 class network(graph):
     # CONVENTION: underscore refers to a time series
     def __init__(self):
+        self.emailNotify = False
         self.statesLog = [] # log for multiple runs
+
+    def setEmail(self, emailFrom, emailPw, emailTo):
+        # set up email notifier
+        self.emailNotify = True
+        self.emailHandler = util.emailHandler(emailFrom, emailPw, emailTo)
 
     def intrinsicFunc(self,r,x):
         # intrinsic dynamics
@@ -139,6 +145,7 @@ class network(graph):
         self.timeStep = timeStep
         self.endTime = timeStep*totIter
         startTimer = time()
+
         while self.iter<totIter:
             self.states += self.getStateChanges()
             for i in range(self.size):
@@ -153,6 +160,11 @@ class network(graph):
                 print(' t = %7.2f/%7.2f | '%(self.time,self.endTime)+\
                     ' | '.join(['x%d = %7.2f'%(i,x) for i,x in enumerate(self.states)][0:min(4,self.size)]),end='')
                 if self.size>4: print(' ...')
+
+            if self.emailNotify:
+                if self.iter%int(totIter/5)==0:
+                    self.emailHandler.sendEmail('running: t = %.2f/%.2f'%(self.time,self.endTime))
+
         endTimer = time()
         print('\n runDynamics() takes %d seconds'%(endTimer-startTimer))
 
@@ -183,7 +195,9 @@ class network(graph):
         avgStates = []
         for i in range(self.size):
             avgStates.append(np.average(self.states_[i]))
+            util.showProgress(i+1,self.size)
         self.avgStates = np.array(avgStates)
+        self.emailHandler.sendEmail('calcTimeAvg() completes')
 
     def calcInfoMatrix(self):
         # compute information matrix of network (theoretical)
@@ -192,7 +206,9 @@ class network(graph):
         self.InfoMatrix = np.zeros((self.size,self.size))
         for i in range(self.size):
             self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
+            util.showProgress(i+1,self.size)
         self.InfoMatrix *= self.Coupling
+        self.emailHandler.sendEmail('calcInfoMatrix() completes')
 
     def timeCovarianceMatrix(self, shift=0):
         # compute time covariance matrix
@@ -200,6 +216,7 @@ class network(graph):
         matrixSum = 0
         for t in range(self.iter-shift):
             matrixSum += np.outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
+            util.showProgress(t+1,self.iter-shift)
         return matrixSum/(self.iter-shift)
 
     def estInfoMatrix(self):
@@ -208,7 +225,9 @@ class network(graph):
         print(' estimating info matrix (Mij) ...')
         K_0 = self.timeCovarianceMatrix(0)
         K_tau = self.timeCovarianceMatrix(1)
+        print(' estimating info matrix (Mij) ... taking logm')
         self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
+        self.emailHandler.sendEmail('estInfoMatrix() completes')
 
     def plotInfoMatrix(self, file, title=None):
         # plot information matrix: theoretical vs empirical
@@ -272,4 +291,4 @@ class network(graph):
         print(' printing dynamics to %s ...'%file)
         data = np.vstack((self.time_,self.states_np)).transpose()
         head = 't,'+','.join(map(str,range(self.size)))
-        np.savetxt(file,data,delimiter=',',fmt="%.4f",header=head,comments='')
+        np.savetxt(file,data,delimiter=',',fmt='%.4f',header=head,comments='')
