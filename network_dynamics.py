@@ -13,24 +13,18 @@ class graph:
     def __init__(self):
         self.internalGraph = False  # graph is internally generated
 
-    def loadGraph(self, adjacencyFile, couplingFile=None, coupling=1):
-        # load adjacency matrix from file
-        print(' loading adjacency file from %s ...'%adjacencyFile)
-        self.Adjacency = np.loadtxt(adjacencyFile,dtype=int,delimiter=' ',comments='#')
-        assert self.Adjacency.shape[0]==self.Adjacency.shape[1], 'adjacency matrix from %s not a square matrix'%file
-        self.size = self.Adjacency.shape[0]
+    def loadGraph(self, couplingFile):
+        # load graph (connectivity & couplings) from file
+        print(' loading coupling file from %s ...'%couplingFile)
+        data = np.loadtxt(couplingFile)
+        indices = list(map(tuple,(data[:,0:2]-1).astype(int)))
+        size = np.max(indices)+1
 
-        # load coupling matrix from file
-        if couplingFile:
-            print(' loading coupling file from %s ...'%couplingFile)
-            self.Coupling = np.loadtxt(couplingFile,delimiter=' ',comments='#')
-            assert self.Coupling.shape[0]==self.Coupling.shape[1], 'coupling matrix from %s not a square matrix'%file
-            assert self.Coupling.shape[0]==self.size, 'size of coupling matrix from %s does not match'%file
-            self.coupling = None
-        # set coupling matrix from adjacency matrix
-        else:
-            self.coupling = coupling
-            self.Coupling = self.coupling*self.Adjacency
+        self.size = size
+        self.Coupling = np.zeros((size,size))
+        for j in range(np.size(data,0)):
+            self.Coupling[indices[j]] = data[j,2]
+        self.Adjacency = (self.Coupling!=0).astype(int)
 
         self.initialize()
 
@@ -100,12 +94,12 @@ class network(graph):
 
     def couplingFunc_synaptic(self,x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 0.1,0.5,4 ##
+        beta1,beta2,y0 = 2,0.5,4 ##
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
     def couplingFuncDerivY_synaptic(self,x,y):
         # y-derivative of synaptic coupling function
-        beta1,beta2,y0 = 0.1,0.5,4 ##
+        beta1,beta2,y0 = 2,0.5,4 ##
         return beta2/beta1*np.cosh(beta2*(y-y0))**-2
 
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
@@ -212,8 +206,8 @@ class network(graph):
         # estimate information matrix of network (empirical)
         # should approx InfoMatrix, compare via plotInfoMatrix
         print(' estimating info matrix (Mij) ...')
-        K_tau = self.timeCovarianceMatrix(1)
         K_0 = self.timeCovarianceMatrix(0)
+        K_tau = self.timeCovarianceMatrix(1)
         self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
 
     def plotInfoMatrix(self, file, title=None):
