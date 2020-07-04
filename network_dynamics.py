@@ -2,12 +2,20 @@
 # search '##' for modifiable parameters
 import util
 import numpy as np
-from scipy.linalg import logm,inv
+from numba import njit
+from scipy.linalg import logm,inv,cholesky
 from scipy.stats import gaussian_kde
 from time import time
 import matplotlib.pyplot as plt
 from matplotlib import rc
 rc('text', usetex=True)
+
+@njit
+def normalVector(mean=0, spread=0, size=1):
+    a = np.empty(size)
+    for i in range(size):
+        a[i] = np.random.normal(mean,spread)
+    return a
 
 class graph:
     def __init__(self):
@@ -86,27 +94,47 @@ class network(graph):
         self.emailNotify = True
         self.emailHandler = util.emailHandler(emailFrom, emailPw, emailTo)
 
-    def intrinsicFunc(self,r,x):
+    @staticmethod
+    @njit
+    def intrinsicFunc(r,x):
         # intrinsic dynamics
         return r*x*(1-x)
 
-    def couplingFunc_diffusive(self,x,y):
+    @staticmethod
+    @njit
+    def intrinsicFunc_fast(size,r,x):
+        # intrinsic dynamics (fast version)
+        a = np.empty(size)
+        for i in range(size):
+            a[i] = r[i]*x[i]*(1-x[i])
+        return a
+
+    @staticmethod
+    @njit
+    def couplingFunc_diffusive(x,y):
         # diffusive coupling function
         return y-x
 
-    def couplingFuncDerivY_diffusive(self,x,y):
+    @staticmethod
+    @njit
+    def couplingFuncDerivY_diffusive(x,y):
         # y-derivative of diffusive coupling function
         return 1
 
-    def couplingFunc_synaptic(self,x,y):
+    @staticmethod
+    @njit
+    def couplingFunc_synaptic(x,y):
         # synaptic coupling function
         beta1,beta2,y0 = 2,0.5,4 ##
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
-    def couplingFuncDerivY_synaptic(self,x,y):
+    @staticmethod
+    @njit
+    def couplingFuncDerivY_synaptic(x,y):
         # y-derivative of synaptic coupling function
         beta1,beta2,y0 = 2,0.5,4 ##
-        return beta2/beta1*np.cosh(beta2*(y-y0))**-2
+        a = np.cosh(beta2*(y-y0))
+        return beta2/beta1/(a*a)
 
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
         # initialize node states and set noise magnitude
@@ -122,21 +150,33 @@ class network(graph):
 
         self.intrinsicCoef = np.array(intrinsicCoef)
         self.noiseCovariance = np.array(noiseCovariance)
+        if np.allclose(self.noiseCovariance,np.zeros((self.size,self.size))):
+            self.noiseChol = np.zeros((self.size,self.size))
+        else:
+            self.noiseChol = cholesky(self.noiseCovariance)
+        if np.allclose(self.noiseChol,self.noiseChol[0,0]*np.eye(self.size)):
+            self.sigma = self.noiseChol[0,0]
 
     def getStateChanges(self):
         # instantaneous node changes
         # changes as an np array
-        WeightedCoupling = np.zeros((self.size,self.size))
-        for i in range(self.size):
-            WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
+        # WeightedCoupling = np.empty((self.size,self.size))
+        # for i in range(self.size):
+        #     WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
+        myRow = self.couplingFunc_synaptic(None,self.states)
+        WeightedCoupling = [myRow,]*self.size
         WeightedCoupling *= self.Coupling
 
-        randomVector = np.random.normal(size=self.size) ##
+        # randomVector = np.random.normal(size=self.size) ##
         # randomVector = np.random.exponential(3,size=self.size)*np.where(np.random.uniform(size=self.size)<0.5,-1,1)
 
-        changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
+        # changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
+        #     WeightedCoupling.sum(axis=1))*self.timeStep+\
+        #     self.noiseChol.dot(randomVector)*np.sqrt(self.timeStep)
+
+        changes = (self.intrinsicFunc_fast(self.size,self.intrinsicCoef,self.states)+\
             WeightedCoupling.sum(axis=1))*self.timeStep+\
-            self.noiseCovariance.dot(randomVector)*np.sqrt(self.timeStep)
+            self.sigma*normalVector(size=self.size)*np.sqrt(self.timeStep)
 
         return changes
 
@@ -166,9 +206,9 @@ class network(graph):
                     self.emailHandler.sendEmail('running: t = %.2f/%.2f'%(self.time,self.endTime))
 
         endTimer = time()
-        print('\n runDynamics() takes %d seconds'%(endTimer-startTimer))
+        print('\n runDynamics() takes %.2f seconds'%(endTimer-startTimer))
 
-        self.states_np = np.zeros((self.size,self.iter))
+        self.states_np = np.empty((self.size,self.iter))
         for i in range(self.size):
             self.states_np[i] = self.states_[i]
         self.statesLog.append(self.states_)
@@ -192,23 +232,26 @@ class network(graph):
     def calcTimeAvg(self):
         # compute time average of node states
         # should approx steady states
+        print(' computing time average of states ...')
         avgStates = []
         for i in range(self.size):
-            avgStates.append(np.average(self.states_[i]))
+            avgStates.append(np.average(self.states_np[i]))
             util.showProgress(i+1,self.size)
         self.avgStates = np.array(avgStates)
-        self.emailHandler.sendEmail('calcTimeAvg() completes')
+        if self.emailNotify: self.emailHandler.sendEmail('calcTimeAvg() completes')
 
     def calcInfoMatrix(self):
         # compute information matrix of network (theoretical)
         # diagonal entries not usable
         print(' computing info matrix (Qij) ...')
-        self.InfoMatrix = np.zeros((self.size,self.size))
-        for i in range(self.size):
-            self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
-            util.showProgress(i+1,self.size)
+        # self.InfoMatrix = np.empty((self.size,self.size))
+        # for i in range(self.size):
+        #     self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
+        #     util.showProgress(i+1,self.size)
+        myRow = self.couplingFuncDerivY_synaptic(None,self.states)
+        self.InfoMatrix = [myRow,]*self.size
         self.InfoMatrix *= self.Coupling
-        self.emailHandler.sendEmail('calcInfoMatrix() completes')
+        if self.emailNotify: self.emailHandler.sendEmail('calcInfoMatrix() completes')
 
     def timeCovarianceMatrix(self, shift=0):
         # compute time covariance matrix
@@ -219,15 +262,25 @@ class network(graph):
             util.showProgress(t+1,self.iter-shift)
         return matrixSum/(self.iter-shift)
 
+    @staticmethod
+    @njit
+    def timeCovarianceMatrix_fast(shift, iter, size, states_np, avgStates):
+        # compute time covariance matrix
+        # shift = multiple of time step
+        matrixSum = np.zeros((size,size))
+        for t in range(iter-shift):
+            matrixSum += np.outer(states_np[:,t+shift]-avgStates,states_np[:,t]-avgStates)
+        return matrixSum/(iter-shift)
+
     def estInfoMatrix(self):
         # estimate information matrix of network (empirical)
         # should approx InfoMatrix, compare via plotInfoMatrix
         print(' estimating info matrix (Mij) ...')
-        K_0 = self.timeCovarianceMatrix(0)
-        K_tau = self.timeCovarianceMatrix(1)
+        K_0 = self.timeCovarianceMatrix_fast(0,self.iter,self.size,self.states_np,self.avgStates)
+        K_tau = self.timeCovarianceMatrix_fast(1,self.iter,self.size,self.states_np,self.avgStates)
         print(' estimating info matrix (Mij) ... taking logm')
         self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
-        self.emailHandler.sendEmail('estInfoMatrix() completes')
+        if self.emailNotify: self.emailHandler.sendEmail('estInfoMatrix() completes')
 
     def plotInfoMatrix(self, file, title=None):
         # plot information matrix: theoretical vs empirical
