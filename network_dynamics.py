@@ -3,6 +3,7 @@
 import util
 import numpy as np
 from numba import njit
+from scipy.sparse import csr_matrix
 from scipy.linalg import logm,inv,cholesky
 from scipy.stats import gaussian_kde
 from time import time
@@ -12,10 +13,23 @@ rc('text', usetex=True)
 
 @njit
 def normalVector(mean=0, spread=0, size=1):
+    # vector of normal random numbers (faster than np.random.normal())
     a = np.empty(size)
     for i in range(size):
         a[i] = np.random.normal(mean,spread)
     return a
+
+@njit
+def outer(x,y):
+    # outer product (faster than np.outer())
+    # assert x.ndim==y.ndim==1
+    a = np.empty((x.size,y.size))
+    for i in range(x.size):
+        for j in range(y.size):
+            a[i][j] = x[i]*y[j]
+    return a
+
+#==============================================================================#
 
 class graph:
     def __init__(self):
@@ -67,7 +81,11 @@ class graph:
 
     def calcConnectProb(self):
         # calculate empirical connection probability
-        return np.sum(self.Adjacency)/(self.size*(self.size-1))
+        return self.Adjacency.sum()/(self.size*(self.size-1))
+
+    def calcSparseness(self):
+        # calculate sparseness of coupling matrix
+        return (self.Adjacency!=0).sum()/(self.size*(self.size-1))
 
     def isBidirectional(self):
         # check if adjacency matrix is symmetric
@@ -265,11 +283,11 @@ class network(graph):
     @staticmethod
     @njit
     def timeCovarianceMatrix_fast(shift, iter, size, states_np, avgStates):
-        # compute time covariance matrix
+        # compute time covariance matrix (fast version)
         # shift = multiple of time step
         matrixSum = np.zeros((size,size))
         for t in range(iter-shift):
-            matrixSum += np.outer(states_np[:,t+shift]-avgStates,states_np[:,t]-avgStates)
+            matrixSum += outer(states_np[:,t+shift]-avgStates,states_np[:,t]-avgStates)
         return matrixSum/(iter-shift)
 
     def estInfoMatrix(self):
