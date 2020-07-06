@@ -1,8 +1,9 @@
 # Project 2a - (FYP Prelim) simulated dynamics, connection extraction
-# numba handles computationally intensive calculations
+# PyTorch handles computationally intensive calculations (for large networks ~ 1000 nodes)
 # search '##' for modifiable parameters
 import util
 import numpy as np
+import torch
 from numba import njit
 from scipy.linalg import logm,inv,cholesky,eig
 from scipy.stats import gaussian_kde
@@ -10,14 +11,6 @@ from time import time
 import matplotlib.pyplot as plt
 from matplotlib import rc
 rc('text', usetex=True)
-
-@njit
-def normalVector(mean=0, spread=1, size=1):
-    # vector of normal random numbers (faster than np.random.normal())
-    a = np.empty(size)
-    for i in range(size):
-        a[i] = np.random.normal(mean,spread)
-    return a
 
 @njit
 def outer(x,y):
@@ -112,43 +105,24 @@ class network(graph):
         self.emailNotify = True
         self.emailHandler = util.emailHandler(emailFrom, emailPw, emailTo)
 
-    @staticmethod
-    @njit
-    def intrinsicFunc(r,x):
+    def intrinsicFunc(self,r,x):
         # intrinsic dynamics
         return r*x*(1-x)
 
-    @staticmethod
-    @njit
-    def intrinsicFunc_fast(size,r,x):
-        # intrinsic dynamics (fast version)
-        a = np.empty(size)
-        for i in range(size):
-            a[i] = r[i]*x[i]*(1-x[i])
-        return a
-
-    @staticmethod
-    @njit
-    def couplingFunc_diffusive(x,y):
+    def couplingFunc_diffusive(self,x,y):
         # diffusive coupling function
         return y-x
 
-    @staticmethod
-    @njit
-    def couplingFuncDerivY_diffusive(x,y):
+    def couplingFuncDerivY_diffusive(self,x,y):
         # y-derivative of diffusive coupling function
         return 1
 
-    @staticmethod
-    @njit
-    def couplingFunc_synaptic(x,y):
+    def couplingFunc_synaptic(self,x,y):
         # synaptic coupling function
         beta1,beta2,y0 = 2,0.5,4 ##
-        return 1/beta1*(1+np.tanh(beta2*(y-y0)))
+        return 1/beta1*(1+torch.tanh(beta2*(y-y0)))
 
-    @staticmethod
-    @njit
-    def couplingFuncDerivY_synaptic(x,y):
+    def couplingFuncDerivY_synaptic(self,x,y):
         # y-derivative of synaptic coupling function
         beta1,beta2,y0 = 2,0.5,4 ##
         a = np.cosh(beta2*(y-y0))
@@ -175,6 +149,14 @@ class network(graph):
         if np.allclose(self.noiseChol,self.noiseChol[0,0]*np.eye(self.size)):
             self.sigma = self.noiseChol[0,0]
 
+        self.toTorch()
+
+    def toTorch(self):
+        self.states = torch.from_numpy(self.states)
+        self.intrinsicCoef = torch.from_numpy(self.intrinsicCoef)
+        self.noiseChol = torch.from_numpy(self.noiseChol)
+        if isinstance(self.Coupling,np.ndarray): self.Coupling = torch.from_numpy(self.Coupling)
+
     def getStateChanges(self):
         # instantaneous node changes
         # changes as an np array
@@ -182,20 +164,20 @@ class network(graph):
         # for i in range(self.size):
         #     WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
         myRow = self.couplingFunc_synaptic(None,self.states)
-        WeightedCoupling = [myRow,]*self.size
+        WeightedCoupling = myRow.repeat(self.size,1)
         WeightedCoupling *= self.Coupling
 
-        randomVector = np.random.normal(size=self.size) ##
+        randomVector = torch.empty(self.size).normal_()
+        # randomVector = np.random.normal(size=self.size) ##
         # randomVector = np.random.exponential(3,size=self.size)*np.where(np.random.uniform(size=self.size)<0.5,-1,1)
 
         # changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
         #     WeightedCoupling.sum(axis=1))*self.timeStep+\
-        #     self.noiseChol.dot(randomVector)*self.sqrtTimeStep
+        #     self.noiseChol.mm(randomVector)*self.sqrtTimeStep
 
-        changes = (self.intrinsicFunc_fast(self.size,self.intrinsicCoef,self.states)+\
+        changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
             WeightedCoupling.sum(axis=1))*self.timeStep+\
             self.sigma*randomVector*self.sqrtTimeStep
-            # self.sigma*normalVector(size=self.size)*self.sqrtTimeStep
 
         return changes
 
@@ -209,7 +191,7 @@ class network(graph):
         while self.iter<totIter:
             self.states += self.getStateChanges()
             for i in range(self.size):
-                self.states_[i].append(self.states[i])
+                self.states_[i].append(self.states[i].item())
             self.time += self.timeStep
             self.time_.append(self.time)
             self.iter += 1
@@ -269,9 +251,10 @@ class network(graph):
         # for i in range(self.size):
         #     self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
         #     util.showProgress(i+1,self.size)
-        myRow = self.couplingFuncDerivY_synaptic(None,self.steadyStates)
-        self.InfoMatrix = [myRow,]*self.size
+        myRow = self.couplingFuncDerivY_synaptic(None,torch.from_numpy(self.steadyStates))
+        self.InfoMatrix = myRow.repeat(self.size,1)
         self.InfoMatrix *= self.Coupling
+        self.InfoMatrix = self.InfoMatrix.numpy()
         if self.emailNotify: self.emailHandler.sendEmail('calcInfoMatrix() completes')
 
     def timeCovarianceMatrix(self, shift=0):
@@ -281,7 +264,7 @@ class network(graph):
         for t in range(self.iter-shift):
             matrixSum += np.outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
             util.showProgress(t+1,self.iter-shift)
-        return matrixSum/(self.iter-shift)
+        return (matrixSum/(self.iter-shift)).numpy()
 
     @staticmethod
     @njit
