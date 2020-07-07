@@ -119,17 +119,22 @@ class network(graph):
 
     def couplingFunc_synaptic(self,x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,4 ##
+        # beta1,beta2,y0 = 2,0.5,4 ##
+        beta1,beta2,y0 = 2,0.5,self.steadyStates ##
         return 1/beta1*(1+torch.tanh(beta2*(y-y0)))
 
     def couplingFuncDerivY_synaptic(self,x,y):
         # y-derivative of synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,4 ##
-        a = np.cosh(beta2*(y-y0))
+        # beta1,beta2,y0 = 2,0.5,4 ##
+        beta1,beta2,y0 = 2,0.5,self.steadyStates ##
+        a = torch.cosh(beta2*(y-y0))
         return beta2/beta1/(a*a)
 
+    #==========================================================================#
+
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
-        # initialize node states and set noise magnitude
+        # initialize node states and set intrinsic coef & noise cov
+        print(' initializing dynamics ...')
         self.states_ = {i:[] for i in range(self.size)}
         self.time = 0
         self.time_ = [0]
@@ -140,6 +145,11 @@ class network(graph):
         for i in range(self.size):
             self.states_[i].append(self.states[i])
 
+        self.setIntrinsicAndNoise(intrinsicCoef,noiseCovariance)
+        self.toTorch()
+
+    def setIntrinsicAndNoise(self, intrinsicCoef, noiseCovariance):
+        # set intrinsic coef & noise cov
         self.intrinsicCoef = np.array(intrinsicCoef)
         self.noiseCovariance = np.array(noiseCovariance)
         if np.allclose(self.noiseCovariance,np.zeros((self.size,self.size))):
@@ -149,13 +159,40 @@ class network(graph):
         if np.allclose(self.noiseChol,self.noiseChol[0,0]*np.eye(self.size)):
             self.sigma = self.noiseChol[0,0]
 
-        self.toTorch()
-
     def toTorch(self):
+        # cast data type to torch.tensor
         self.states = torch.from_numpy(self.states)
         self.intrinsicCoef = torch.from_numpy(self.intrinsicCoef)
         self.noiseChol = torch.from_numpy(self.noiseChol)
         if isinstance(self.Coupling,np.ndarray): self.Coupling = torch.from_numpy(self.Coupling)
+
+    #==========================================================================#
+
+    def readDynamics(self, file):
+        # read time series data from file
+        print(' reading dynamics from %s ...'%file)
+        data = np.loadtxt(file,delimiter=',',skiprows=1)
+        self.size = data.shape[1]-1
+        self.initStates = data[0,1:]
+        self.states = data[-1,1:]
+        self.states_ = {i:[] for i in range(self.size)}
+        for i in range(self.size):
+            self.states_[i] = data[:,i+1].tolist()
+        self.states_np = np.array([self.states_[i] for i in range(self.size)])
+        self.time_ = data[:,0].tolist()
+        self.time = self.time_[-1]
+        self.timeStep = self.time_[1]-self.time_[0]
+        self.sqrtTimeStep = np.sqrt(self.timeStep)
+        self.iter = len(self.time_)
+
+    def continueDynamics(self, file, intrinsicCoef, noiseCovariance):
+        # continue dynamics from read time series data
+        print(' initializing dynamics from %s ...'%file)
+        self.readDynamics(file)
+        self.setIntrinsicAndNoise(intrinsicCoef, noiseCovariance)
+        self.toTorch()
+
+    #==========================================================================#
 
     def getStateChanges(self):
         # instantaneous node changes
@@ -210,37 +247,34 @@ class network(graph):
         endTimer = time()
         print('\n runDynamics() takes %.2f seconds'%(endTimer-startTimer))
 
-        self.states_np = np.empty((self.size,self.iter))
-        for i in range(self.size):
-            self.states_np[i] = self.states_[i]
+        self.states_np = np.array([self.states_[i] for i in range(self.size)])
         self.statesLog.append(self.states_)
 
     def removeTransient(self, transientSteps):
         # remove (initial) transient states
         # look into dynamics plot to determine what to remove
+        print(' removing transient states ...')
         self.iter -= transientSteps
         self.states_np = self.states_np[:,transientSteps:]
         del self.time_[:transientSteps]
         for i in range(self.size):
             del self.states_[i][:transientSteps]
 
-    def setSteadyStates(self):
+    def setSteadyStates(self, file=None):
         # set steady states with a noise-free network
         # REQUIRE: noiseCovariance = 0 (run a noise-free network separately)
-        steadyStates = []
-        for i in range(self.size):
-            steadyStates.append(self.states_np[i,-1])
-        self.steadyStates = np.array(steadyStates)
+        print(' setting steady states ...')
+        if file:
+            data = np.loadtxt(file,delimiter=',',skiprows=1)
+            self.steadyStates = data[1:]
+        else:
+            self.steadyStates = self.states_np[:,-1]
 
     def calcTimeAvg(self):
         # compute time average of node states
         # should approx steady states
         print(' computing time average of states ...')
-        avgStates = []
-        for i in range(self.size):
-            avgStates.append(np.average(self.states_np[i]))
-            util.showProgress(i+1,self.size)
-        self.avgStates = np.array(avgStates)
+        self.avgStates = self.states_np.mean(axis=1)
         if self.emailNotify: self.emailHandler.sendEmail('calcTimeAvg() completes')
 
     def calcInfoMatrix(self):
@@ -264,7 +298,7 @@ class network(graph):
         for t in range(self.iter-shift):
             matrixSum += np.outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
             util.showProgress(t+1,self.iter-shift)
-        return (matrixSum/(self.iter-shift)).numpy()
+        return matrixSum/(self.iter-shift)
 
     @staticmethod
     @njit
@@ -332,15 +366,15 @@ class network(graph):
         fig.tight_layout()
         fig.savefig(file)
 
-    def plotDynamics(self, file, title=None, nodes=None, color='', withSteadyStates=False):
+    def plotDynamics(self, file, title=None, nodes=None, iterSlice=None, color='', withSteadyStates=False):
         # plot time series data to file
-        # avoid if large dataset
         print(' plotting dynamics to %s ...'%file)
         fig = plt.figure(figsize=(12,6))
-        plt.xlim(np.min(self.time_),np.max(self.time_))
         if not nodes: nodes = range(self.size)
+        if not iterSlice: iterSlice = slice(self.iter)
+        plt.xlim(self.time_[iterSlice][0],self.time_[iterSlice][-1])
         for i in nodes:
-            plt.plot(self.time_,self.states_[i],color)
+            plt.plot(self.time_[iterSlice],self.states_np[i,iterSlice],color)
             if withSteadyStates: plt.axhline(y=self.steadyStates[i],c=color,ls='--')
         if title: plt.title(title)
         plt.xlabel('time $t$')
@@ -349,10 +383,13 @@ class network(graph):
         fig.tight_layout()
         fig.savefig(file)
 
-    def printDynamics(self, file):
+    def printDynamics(self, file, iterSlice=None, lastSlice=False):
         # print time series data to file (csv format)
-        # avoid if large dataset
         print(' printing dynamics to %s ...'%file)
-        data = np.vstack((self.time_,self.states_np)).transpose()
+        if not iterSlice: iterSlice = slice(self.iter)
+        if lastSlice:
+            data = np.concatenate(([self.time_[-1]],self.states_np[:,-1])).reshape((1,self.size+1))
+        else:
+            data = np.vstack((self.time_[iterSlice],self.states_np[iterSlice])).transpose()
         head = 't,'+','.join(map(str,range(self.size)))
         np.savetxt(file,data,delimiter=',',fmt='%.4f',header=head,comments='')
