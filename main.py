@@ -1,18 +1,23 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import network_dynamics_torch as n
+import network_dynamics_cluster as n
 np.random.seed(0)
 
 myNet = n.network()
 myNet.loadGraph('DIV25_PREmethod')
-# myNet.readDynamics('dyn.csv')
+myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.csv','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.csv'])
+myNet.setSteadyStates('(neuron_noiseFree)dyn_lastStep.csv')
+myNet.calcStatesFluc()
+myNet.plotFlucSdAgainstDegStren('SdDeg.png','SdStren.png')
+# myNet.plotFlucDist('flucDist.png',[0,4])
+# myNet.printDynamics('(neuron_noiseFree)dyn_dt=2e-4_6e3steps.csv')
 # myNet.plotDynamics('dyn.png')
 
 size = myNet.size
 sigma = 0.5
 dt = 2e-4 # step size
-# T0 = 5e3 # time steps (noise-free network)
-T1 = 5e3 # time steps (noisy network)
+T0 = 5e2 # time steps (noise-free network)
+T1 = 6e3 # time steps (noisy network)
 r0 = 10
 r = [r0]*size # coef of intrinsic dynamics
 ic = np.random.uniform(0.9,1.1,size) # initial conditions
@@ -28,15 +33,15 @@ c = 'synaptic' # coupling function
 # myNet.runDynamics(dt,T0)
 # myNet.printDynamics('dyn.csv')
 # myNet.plotDynamics('dyn.png')
-myNet.setSteadyStates('(neuron_noiseFree)dyn_lastStep.csv')
+# myNet.setSteadyStates('(neuron_noiseFree)dyn_lastStep.csv')
 
 # generate time series
 # myNet.emailHandler.setEmailTitle('noisy network')
-myNet.initDynamics(ic,r,sigma**2*np.eye(size))
-# myNet.continueDynamics('dyn.csv',r,sigma**2*np.eye(size))
-myNet.runDynamics(dt,T1)
-myNet.printDynamics('(neuron_withNoise_sigma=0.5_y0=4_)dyn_dt=2e-4_5e3steps.csv')
-myNet.plotDynamics('(neuron_withNoise_sigma=0.5_y0=4_)dyn_dt=2e-4_5e3steps.png')
+# myNet.initDynamics(ic,r,sigma**2*np.eye(size))
+# myNet.continueDynamics('(cont)(neuron_noiseFree)dyn_dt=2e-4_5e3steps.csv',r,sigma**2*np.eye(size))
+# myNet.runDynamics(dt,T1)
+# myNet.printDynamics('(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.csv')
+# myNet.plotDynamics('(neuron_withNoise_sigma=0.5_y0=4_)dyn_dt=2e-4_5e3steps.png')
 # myNet.removeTransient(4000)
 
 # info matrix
