@@ -1,17 +1,19 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import network_dynamics_cluster as n
-np.random.seed(0)
+# np.random.seed(0)
 
 myNet = n.network()
 myNet.loadGraph('DIV25_PREmethod')
-myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.csv','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.csv'])
-myNet.setSteadyStates('(neuron_noiseFree)dyn_lastStep.csv')
-myNet.calcStatesFluc()
-myNet.plotFlucSdAgainstDegStren('SdDeg.png','SdStren.png')
+
+# myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.npy','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.npy'])
+# myNet.readDynamics('(neuron_withNoise_sigma=0.5_y0=4)dyn_dt=2e-4_2e4steps.npy')
+# myNet.saveNpDynamics('(neuron_withNoise_sigma=0.5_y0=4)dyn_dt=2e-4_2e4steps.npy')
+# myNet.setSteadyStates('(neuron_noiseFree)dyn_lastStep.csv')
+# myNet.removeTransient(4000)
+# myNet.calcStatesFluc()
 # myNet.plotFlucDist('flucDist.png',[0,4])
-# myNet.printDynamics('(neuron_noiseFree)dyn_dt=2e-4_6e3steps.csv')
-# myNet.plotDynamics('dyn.png')
+# myNet.plotFlucSdAgainstDegStren('SdDeg.png','SdStren.png')
 
 size = myNet.size
 sigma = 0.5

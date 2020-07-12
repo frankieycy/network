@@ -1,3 +1,4 @@
+# IMPORTANT: refer to network_dynamics_cluster.py for the most updated codes
 # Project 2a - (FYP Prelim) simulated dynamics, connection extraction
 # numba handles computationally intensive calculations
 # search '##' for modifiable parameters
@@ -6,6 +7,7 @@ import numpy as np
 from numba import njit
 from scipy.linalg import logm,inv,cholesky,eig
 from scipy.stats import gaussian_kde
+from scipy.sparse import csr_matrix
 from time import time
 import matplotlib.pyplot as plt
 from matplotlib import rc
@@ -67,6 +69,9 @@ class graph:
         self.initialize()
 
     def initialize(self):
+        # sparse representation
+        self.sparseCoupling = csr_matrix(self.Coupling)
+
         # adjacency list
         self.AdjacencyList = {i:[] for i in range(self.size)}
         for i in range(self.size):
@@ -186,6 +191,12 @@ class network(graph):
 
     #==========================================================================#
 
+    def continueDynamics(self, file, intrinsicCoef, noiseCovariance):
+        # continue dynamics from read time series data
+        print(' initializing dynamics from %s ...'%file)
+        self.readDynamics(file)
+        self.setIntrinsicAndNoise(intrinsicCoef, noiseCovariance)
+
     def readDynamics(self, file):
         # read time series data from file
         print(' reading dynamics from %s ...'%file)
@@ -202,12 +213,6 @@ class network(graph):
         self.timeStep = self.time_[1]-self.time_[0]
         self.sqrtTimeStep = np.sqrt(self.timeStep)
         self.iter = len(self.time_)
-
-    def continueDynamics(self, file, intrinsicCoef, noiseCovariance):
-        # continue dynamics from read time series data
-        print(' initializing dynamics from %s ...'%file)
-        self.readDynamics(file)
-        self.setIntrinsicAndNoise(intrinsicCoef, noiseCovariance)
 
     #==========================================================================#
 

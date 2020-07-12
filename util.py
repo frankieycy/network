@@ -5,19 +5,12 @@ from pandas import read_csv
 progressBars = ['-','\\','|','/']
 
 def loadcsv(f):
+    # load csv file (faster than np.loadtxt())
     return read_csv(f).values
-
-def setUpFolder(folder, format=None):
-    # create folder if unexisting or clear folder
-    if not os.path.isdir(folder):
-        os.mkdir(folder)
-    if format: files = glob.glob(os.path.join(folder,format))
-    else: files = glob.glob(os.path.join(folder,'*'))
-    for f in files:
-        os.remove(f)
 
 def showProgress(currSteps, totSteps):
     # report program progress
+    # other option: tqdm
     print(' %c %.2f %%\r'%(progressBars[currSteps%4],100.*currSteps/totSteps),end='')
 
 class emailHandler:
