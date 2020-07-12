@@ -9,6 +9,9 @@ from scipy.linalg import logm,inv,cholesky,eig
 from scipy.stats import gaussian_kde,norm
 from scipy.sparse import csr_matrix
 from time import time
+from tqdm import tqdm
+from multiprocessing import Pool,cpu_count
+import istarmap
 import matplotlib.pyplot as plt
 from matplotlib import rc
 rc('text', usetex=True)
@@ -144,7 +147,7 @@ class network(graph):
     @njit
     def couplingFunc_synaptic(x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,1 ##
+        beta1,beta2,y0 = 20,1,1 ##
         # beta1,beta2,y0 = 2,0.5,self.steadyStates ##
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
@@ -152,7 +155,7 @@ class network(graph):
     @njit
     def couplingFuncDerivY_synaptic(x,y):
         # y-derivative of synaptic coupling function
-        beta1,beta2,y0 = 2,0.5,1 ##
+        beta1,beta2,y0 = 20,1,1 ##
         # beta1,beta2,y0 = 2,0.5,self.steadyStates ##
         a = np.cosh(beta2*(y-y0))
         return beta2/beta1/(a*a)
@@ -210,9 +213,12 @@ class network(graph):
         # read time series data from file
         print(' reading dynamics from %s ...'%file)
         if isinstance(file,list):
-            data = np.vstack([np.loadtxt(f,delimiter=',',skiprows=1) for f in file])
+            # p = Pool(cpu_count()-1)
+            if file[0][-4:]=='.npy': data = np.vstack([np.load(f) for f in file]) # data = np.vstack(p.map(np.load,file))
+            else: data = np.vstack([util.loadcsv(f) for f in file]) # data = np.vstack(p.map(util.loadcsv,file))
         else:
-            data = np.loadtxt(file,delimiter=',',skiprows=1)
+            if file[-4:]=='.npy': data = np.load(file)
+            else: data = util.loadcsv(file)
         print(' finished reading dynamics ...')
         self.size = data.shape[1]-1
         self.initStates = data[0,1:]
@@ -221,13 +227,18 @@ class network(graph):
             self.states_ = {i:[] for i in range(self.size)}
             self.time_ = []
         else: # if not cont file
-            self.states_ = {i:data[:,i+1].tolist() for i in range(self.size)}
+            # self.states_ = {i:data[:,i+1].tolist() for i in range(self.size)}
             self.time_ = data[:,0].tolist()
-        self.states_np = np.array([self.states_[i] for i in range(self.size)])
+        self.states_np = data[:,1:].T
         self.time = data[-1,0]
         self.timeStep = data[1,0]-data[0,0]
         self.sqrtTimeStep = np.sqrt(self.timeStep)
         self.iter = int(self.time/self.timeStep)
+
+    def saveNpDynamics(self, file):
+        # print time series data to file (npy format)
+        print(' printing dynamics to %s ...'%file)
+        np.save(file,np.vstack((self.time_,self.states_np)).T)
 
     #==========================================================================#
 
@@ -280,7 +291,7 @@ class network(graph):
                 if self.size>4: print(' ...')
 
             if self.emailNotify:
-                if self.iter%int(totIter/5)==0:
+                if self.iter%(totIter//5)==0:
                     self.emailHandler.sendEmail('running: t = %.2f/%.2f'%(self.time,self.endTime))
 
         endTimer = time()
@@ -296,8 +307,8 @@ class network(graph):
         self.iter -= transientSteps
         self.states_np = self.states_np[:,transientSteps:]
         del self.time_[:transientSteps]
-        for i in range(self.size):
-            del self.states_[i][:transientSteps]
+        # for i in range(self.size):
+        #     del self.states_[i][:transientSteps]
 
     def setSteadyStates(self, file=None):
         # set steady states with a noise-free network
@@ -319,7 +330,7 @@ class network(graph):
     def calcStatesFluc(self):
         # compute mean & s.d. of fluctuations around steady states
         print(' computing mean & s.d. of fluctuations around steady states ...')
-        self.statesFluc = self.states_np-self.steadyStates.reshape(-1,1)
+        self.statesFluc = self.states_np-self.steadyStates.reshape(-1,1) # fluc ard steady states
         self.flucMean = self.statesFluc.mean(axis=1)
         self.flucSd = self.statesFluc.std(axis=1)
         if self.emailNotify: self.emailHandler.sendEmail('calcStatesFluc() completes')
@@ -341,10 +352,34 @@ class network(graph):
     def timeCovarianceMatrix(self, shift=0):
         # compute time covariance matrix
         # shift = multiple of time step
+        # matrixSum = 0
+        # for t in range(self.iter-shift):
+        #     matrixSum += outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
+        #     util.showProgress(t+1,self.iter-shift)
+        # return matrixSum/(self.iter-shift)
+        statesFluc = self.states_np.T-self.avgStates # fluc ard steady states
         matrixSum = 0
-        for t in range(self.iter-shift):
-            matrixSum += np.outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
-            util.showProgress(t+1,self.iter-shift)
+        myOuter = np.empty((self.size,self.size))
+        for t in tqdm(range(self.iter-shift)):
+            matrixSum += np.outer(statesFluc[t+shift],statesFluc[t],myOuter)
+            # matrixSum += myOuter
+            # matrixSum += np.outer(statesFluc[:,t+shift],statesFluc[:,t],myOuter)
+        return matrixSum/(self.iter-shift)
+
+    def timeCovarianceMatrix_parallel(self, shift=0):
+        # compute time covariance matrix
+        # shift = multiple of time step
+        p = Pool(cpu_count()-1)
+        # statesFluc = self.states_np-self.avgStates.reshape(-1,1)
+        statesFluc = self.states_np.T-self.avgStates
+        matrixSum = 0
+        tmp = np.empty((self.size,self.size))
+        if shift==0: #return np.mean([x for x in tqdm(p.istarmap(outer,zip(statesFluc.T,statesFluc.T)),total=self.iter)],axis=0)
+            # for myOuter in tqdm(p.istarmap(outer,zip(statesFluc.T,statesFluc.T)),total=self.iter): matrixSum += myOuter
+            for myOuter in tqdm(p.istarmap(np.outer,zip(statesFluc,statesFluc,[tmp]*self.iter)),total=self.iter): matrixSum += myOuter
+        else: #return np.mean([x for x in tqdm(p.starmap(outer,zip(statesFluc[:,:-shift].T,statesFluc[:,shift:].T)),total=self.iter)],axis=0)
+            # for myOuter in tqdm(p.starmap(outer,zip(statesFluc[:,:-shift].T,statesFluc[:,shift:].T)),total=self.iter): matrixSum += myOuter
+            for myOuter in tqdm(p.starmap(np.outer,zip(statesFluc[:-shift],statesFluc[shift:],[tmp]*self.iter)),total=self.iter-shift): matrixSum += myOuter
         return matrixSum/(self.iter-shift)
 
     @staticmethod
@@ -352,8 +387,7 @@ class network(graph):
     def timeCovarianceMatrix_fast(shift, iter, size, states_np, avgStates):
         # compute time covariance matrix (fast version)
         # shift = multiple of time step
-        # OPTIMIZE!
-        statesFluc = states_np-avgStates.reshape(-1,1)
+        statesFluc = states_np-avgStates.reshape(-1,1) # fluc ard steady states
         matrixSum = np.zeros((size,size))
         myOuter = np.empty((size,size))
         for t in prange(iter-shift):
@@ -366,11 +400,12 @@ class network(graph):
         # estimate information matrix of network (empirical)
         # should approx InfoMatrix, compare via plotInfoMatrix
         print(' estimating info matrix (Mij) ...')
-        startTimer = time()
-        K_0 = self.timeCovarianceMatrix_fast(0,self.iter,self.size,self.states_np,self.avgStates)
-        K_tau = self.timeCovarianceMatrix_fast(1,self.iter,self.size,self.states_np,self.avgStates)
-        endTimer = time()
-        print(endTimer-startTimer)
+        # K_0 = self.timeCovarianceMatrix_fast(0,self.iter,self.size,self.states_np,self.avgStates)
+        # K_tau = self.timeCovarianceMatrix_fast(1,self.iter,self.size,self.states_np,self.avgStates)
+        # K_0 = self.timeCovarianceMatrix_parallel(0)
+        # K_tau = self.timeCovarianceMatrix_parallel(1)
+        K_0 = self.timeCovarianceMatrix(0)
+        K_tau = self.timeCovarianceMatrix(1)
         print(' estimating info matrix (Mij) ... taking logm')
         self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
         if self.emailNotify: self.emailHandler.sendEmail('estInfoMatrix() completes')
@@ -438,7 +473,7 @@ class network(graph):
         if degreeTitle: plt.title(degreeTitle)
         plt.xlabel('degrees $k_i$')
         plt.legend()
-        fig.tight_layout()
+        # fig.tight_layout()
         fig.savefig(degreeFile)
 
         fig = plt.figure()
@@ -453,7 +488,7 @@ class network(graph):
         if strengthTitle: plt.title(strengthTitle)
         plt.xlabel('strengths $s_i$')
         plt.legend()
-        fig.tight_layout()
+        # fig.tight_layout()
         fig.savefig(strengthFile)
 
     def plotFlucDist(self, file, nodes, title=None):
@@ -474,7 +509,7 @@ class network(graph):
         if title: plt.title(title)
         plt.xlabel('fluctuation $x_i-X_i$')
         plt.legend()
-        fig.tight_layout()
+        # fig.tight_layout()
         fig.savefig(file)
 
     def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
@@ -528,7 +563,7 @@ class network(graph):
         if lastSlice:
             data = np.concatenate(([self.time_[-1]],self.states_np[:,-1])).reshape((1,self.size+1))
         else:
-            data = np.vstack((self.time_[iterSlice],self.states_np[:,iterSlice])).transpose()
+            data = np.vstack((self.time_[iterSlice],self.states_np[:,iterSlice])).T
         head = 't,'+','.join(map(str,range(self.size)))
         np.savetxt(file,data,delimiter=',',fmt='%.4f',header=head,comments='')
 
