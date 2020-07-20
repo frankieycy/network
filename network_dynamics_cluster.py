@@ -14,7 +14,7 @@ from tqdm import tqdm
 from multiprocessing import Pool,cpu_count
 import matplotlib.pyplot as plt
 from matplotlib import rc
-rc('text', usetex=True)
+# rc('text', usetex=True) # comment this out if no tex distribution is installed
 plt.switch_backend('agg')
 
 @njit
@@ -28,11 +28,19 @@ def normalVector(mean=0, spread=1, size=1):
 @njit
 def outer(x,y):
     # outer product (faster than np.outer())
-    # assert x.ndim==y.ndim==1
     a = np.empty((x.size,y.size))
     for i in range(x.size):
         for j in range(y.size):
-            a[i][j] = x[i]*y[j]
+            a[i,j] = x[i]*y[j]
+    return a
+
+@njit
+def outerSubtract(x,y):
+    # outer subtraction
+    a = np.empty((x.size,y.size))
+    for i in range(x.size):
+        for j in range(y.size):
+            a[i,j] = y[j]-x[i]
     return a
 
 #==============================================================================#
@@ -41,11 +49,13 @@ class graph:
     def __init__(self):
         self.internalGraph = False  # graph is internally generated
 
-    def loadGraph(self, couplingFile):
+    def loadGraph(self, couplingFile, multiplier=None):
         # load graph (connectivity & couplings) from file
+        # file format: i j Coupling(i->j)
         print(' loading coupling file from %s ...'%couplingFile)
         data = np.loadtxt(couplingFile)
-        indices = list(map(tuple,(data[:,0:2]-1).astype(int)))
+        if multiplier: data[:,2] *= multiplier
+        indices = list(map(tuple,(data[:,(1,0)]-1).astype(int)))
         size = np.max(indices)+1
 
         self.size = size
@@ -75,6 +85,7 @@ class graph:
     def initialize(self):
         # sparse representation
         self.sparseCoupling = csr_matrix(self.Coupling)
+        self.couplingNonZeroIdx = self.sparseCoupling.nonzero()
 
         # node degrees
         self.degrees_in = self.Adjacency.sum(axis=1)
@@ -242,10 +253,16 @@ class network(graph):
         #     WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
         # WeightedCoupling *= self.Coupling
 
+        # WeightedCoupling = self.sparseCoupling.multiply(outerSubtract(self.states,self.states))
+        WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
+            (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
+            shape=(self.size,self.size)
+        ))
+
         # using feature of synaptic coupling function
-        myRow = self.couplingFunc_synaptic(None,self.states)
+        # myRow = self.couplingFunc_synaptic(None,self.states)
         # WeightedCoupling = np.multiply(self.Coupling,myRow)
-        WeightedCoupling = self.sparseCoupling.multiply(myRow)
+        # WeightedCoupling = self.sparseCoupling.multiply(myRow)
 
         randomVector = np.random.normal(size=self.size) ##
         # randomVector = np.random.exponential(3,size=self.size)*np.where(np.random.uniform(size=self.size)<0.5,-1,1)
@@ -270,7 +287,11 @@ class network(graph):
         self.timeStep = timeStep
         self.sqrtTimeStep = np.sqrt(timeStep)
         self.endTime = timeStep*totIter
-        startTimer = time()
+
+        pbar = tqdm(total=totIter) # progress bar
+        pbar.update(self.iter)
+
+        # startTimer = time()
 
         while self.iter<totIter:
             self.states += self.getStateChanges()
@@ -281,7 +302,8 @@ class network(graph):
             self.iter += 1
 
             if silent:
-                print(' t = %7.2f | %c %.2f %%\r'%(self.time,util.progressBars[self.iter%4],100*self.time/self.endTime),end='')
+                pbar.update()
+                # print(' t = %7.2f | %c %.2f %%\r'%(self.time,util.progressBars[self.iter%4],100*self.time/self.endTime),end='')
             elif self.iter%100==0:
                 print(' t = %7.2f/%7.2f | '%(self.time,self.endTime)+\
                     ' | '.join(['x%d = %7.2f'%(i,x) for i,x in enumerate(self.states)][0:min(4,self.size)]),end='')
@@ -291,8 +313,10 @@ class network(graph):
                 if self.iter%(totIter//5)==0:
                     self.emailHandler.sendEmail('running: t = %.2f/%.2f'%(self.time,self.endTime))
 
-        endTimer = time()
-        print('\n runDynamics() takes %.2f seconds'%(endTimer-startTimer))
+        pbar.close()
+
+        # endTimer = time()
+        # print('\n runDynamics() takes %.2f seconds'%(endTimer-startTimer))
 
         self.states_np = np.array([self.states_[i] for i in range(self.size)])
         self.statesLog.append(self.states_)
@@ -357,10 +381,13 @@ class network(graph):
         #     self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
         #     util.showProgress(i+1,self.size)
 
-        # using feature of synaptic coupling function
-        myRow = self.couplingFuncDerivY_synaptic(None,self.steadyStates)
-        # self.InfoMatrix = np.multiply(self.Coupling,myRow)
+        myRow = self.couplingFuncDerivY_diffusive(None,self.steadyStates)
         self.InfoMatrix = self.sparseCoupling.multiply(myRow).A
+
+        # using feature of synaptic coupling function
+        # myRow = self.couplingFuncDerivY_synaptic(None,self.steadyStates)
+        # self.InfoMatrix = np.multiply(self.Coupling,myRow)
+        # self.InfoMatrix = self.sparseCoupling.multiply(myRow).A
 
         if self.emailNotify: self.emailHandler.sendEmail('calcInfoMatrix() completes')
 
@@ -368,42 +395,59 @@ class network(graph):
         # compute time covariance matrix
         # shift = multiple of time step
 
-        # matrixSum = 0
-        # for t in range(self.iter-shift):
-        #     matrixSum += outer(self.states_np[:,t+shift]-self.avgStates,self.states_np[:,t]-self.avgStates)
-        #     util.showProgress(t+1,self.iter-shift)
-
         matrixSum = 0
         statesFluc = self.states_np.T-self.avgStates # fluc ard avg states
+        iter = statesFluc.shape[0] # num of rows in statesFluc
         _ = np.empty((self.size,self.size)) # for faster np.outer()
 
-        for t in tqdm(range(self.iter-shift)):
+        for t in tqdm(range(iter-shift)):
             matrixSum += np.outer(statesFluc[t+shift],statesFluc[t],_)
 
-        return matrixSum/(self.iter-shift)
+        return matrixSum/(iter-shift)
+
+    def printTimeCovOuterProdSum(self, shift, file):
+        # print outer product sum (for computing time covariance matrix)
+        # shift = multiple of time step
+        # this is SUGGESTED
+        print(' computing outer product sum and printing to %s ...'%file)
+
+        matrixSum = 0
+        statesFluc = self.states_np.T-self.avgStates
+        iter = statesFluc.shape[0]
+        _ = np.empty((self.size,self.size))
+
+        for t in tqdm(range(iter-shift)):
+            matrixSum += np.outer(statesFluc[t+shift],statesFluc[t],_)
+
+        np.save(file,matrixSum)
 
     def timeCovarianceMatrix_parallel(self, shift=0):
         # compute time covariance matrix
         # shift = multiple of time step
 
         p = Pool(cpu_count()-1)
+
         matrixSum = 0
         statesFluc = self.states_np.T-self.avgStates
+        iter = statesFluc.shape[0]
         _ = np.empty((self.size,self.size))
 
-        if shift==0: for myOuter in tqdm(p.istarmap(np.outer,zip(statesFluc,statesFluc,[_]*self.iter)),total=self.iter): matrixSum += myOuter
-        else: for myOuter in tqdm(p.starmap(np.outer,zip(statesFluc[:-shift],statesFluc[shift:],[_]*self.iter)),total=self.iter-shift): matrixSum += myOuter
+        if shift==0:
+            for myOuter in tqdm(p.istarmap(np.outer,zip(statesFluc,statesFluc,[_]*iter)),total=iter): matrixSum += myOuter
+        else:
+            for myOuter in tqdm(p.starmap(np.outer,zip(statesFluc[:-shift],statesFluc[shift:],[_]*iter)),total=iter-shift): matrixSum += myOuter
 
-        return matrixSum/(self.iter-shift)
+        return matrixSum/(iter-shift)
 
     @staticmethod
     @njit(parallel=True,nogil=True)
-    def timeCovarianceMatrix_fast(shift, iter, size, states_np, avgStates):
+    def timeCovarianceMatrix_fast(shift, size, states_np, avgStates):
         # compute time covariance matrix (fast version)
         # shift = multiple of time step
 
-        statesFluc = states_np.T-avgStates
         matrixSum = np.zeros((size,size))
+        statesFluc = states_np.T-avgStates
+        iter = statesFluc.shape[0]
         _ = np.empty((size,size))
 
         for t in prange(iter-shift):
@@ -411,22 +455,27 @@ class network(graph):
 
         return matrixSum/(iter-shift)
 
-    def estInfoMatrix(self):
+    def estInfoMatrix(self, K0file=None, K1file=None):
         # estimate information matrix of network (empirical)
         # should approx InfoMatrix, compare via plotInfoMatrix
+        # load outer prod sum files with K0file & K1file
         print(' estimating info matrix (Mij) ...')
 
-        K_0 = self.timeCovarianceMatrix(0)
-        K_tau = self.timeCovarianceMatrix(1)
+        if K0files and K1files: # load from outer prod sum files (SUGGESTED)
+            K0 = np.sum([np.load(f) for f in K0file])
+            K1 = np.sum([np.load(f) for f in K1file])
+        else: # compute from scratch
+            K0 = self.timeCovarianceMatrix(0)
+            K1 = self.timeCovarianceMatrix(1)
 
-        # K_0 = self.timeCovarianceMatrix_parallel(0)
-        # K_tau = self.timeCovarianceMatrix_parallel(1)
+            # K0 = self.timeCovarianceMatrix_parallel(0)
+            # K1 = self.timeCovarianceMatrix_parallel(1)
 
-        # K_0 = self.timeCovarianceMatrix_fast(0,self.iter,self.size,self.states_np,self.avgStates)
-        # K_tau = self.timeCovarianceMatrix_fast(1,self.iter,self.size,self.states_np,self.avgStates)
+            # K0 = self.timeCovarianceMatrix_fast(0,self.size,self.states_np,self.avgStates)
+            # K1 = self.timeCovarianceMatrix_fast(1,self.size,self.states_np,self.avgStates)
 
         print(' estimating info matrix (Mij) ... taking logm')
-        self.InfoMatrix_est = logm(K_tau.dot(inv(K_0)))/self.timeStep
+        self.InfoMatrix_est = logm(K1.dot(inv(K0)))/self.timeStep
 
         if self.emailNotify: self.emailHandler.sendEmail('estInfoMatrix() completes')
 
@@ -456,6 +505,7 @@ class network(graph):
         plt.ylabel('$M_{ij}$')
         fig.tight_layout()
         fig.savefig(file)
+        plt.close()
 
     def plotEstInfoMatrix(self, file, title=None):
         # plot estimated information matrix: distribution
@@ -479,8 +529,9 @@ class network(graph):
         plt.legend()
         fig.tight_layout()
         fig.savefig(file)
+        plt.close()
 
-    def plotDegreeStengthDist(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
+    def plotDegreeStrengthDist(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
         # plotting degree and strength distribution
         print(' plotting degree & strength distribution to %s & %s ...'%(degreeFile,strengthFile))
 
@@ -497,8 +548,9 @@ class network(graph):
         if degreeTitle: plt.title(degreeTitle)
         plt.xlabel('degrees $k_i$')
         plt.legend()
-        # fig.tight_layout()
+        fig.tight_layout()
         fig.savefig(degreeFile)
+        plt.close()
 
         fig = plt.figure()
         minStren = np.percentile((self.strengths_in,self.strengths_out),2)
@@ -512,8 +564,9 @@ class network(graph):
         if strengthTitle: plt.title(strengthTitle)
         plt.xlabel('strengths $s_i$')
         plt.legend()
-        # fig.tight_layout()
+        fig.tight_layout()
         fig.savefig(strengthFile)
+        plt.close()
 
     def plotFlucDist(self, file, nodes, title=None):
         # plot distribution of fluctuations around steady states
@@ -528,14 +581,15 @@ class network(graph):
             density = gaussian_kde(self.statesFluc[i])
             mean = self.statesFluc[i].mean()
             sd = self.statesFluc[i].std()
-            plt.plot(x,density(x),label='node %d: $\mu=%.2f,\sigma=%.2f$'%(i,mean,sd),c=colors[i])
+            plt.plot(x,density(x),label='node %d: $\mu=%.4f,\sigma=%.4f$'%(i,mean,sd),c=colors[i])
             plt.plot(x,norm(loc=mean,scale=sd).pdf(x),c=colors[i],ls='--')
         plt.ylim(bottom=0)
         if title: plt.title(title)
         plt.xlabel('fluctuation $x_i-X_i$')
         plt.legend()
-        # fig.tight_layout()
+        fig.tight_layout()
         fig.savefig(file)
+        plt.close()
 
     def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
         # plot s.d. of fluctuations against degrees & strengths
@@ -550,6 +604,7 @@ class network(graph):
         plt.legend()
         fig.tight_layout()
         fig.savefig(degreeFile)
+        plt.close()
 
         fig = plt.figure()
         plt.scatter(self.strengths_in,self.flucSd,label='in-strengths',s=1,c='b')
@@ -560,6 +615,32 @@ class network(graph):
         plt.legend()
         fig.tight_layout()
         fig.savefig(strengthFile)
+        plt.close()
+
+    def plotCrossSecDist(self, t, file, title=None, xlimRange=None, ylimRange=None):
+        # plot cross-sectional distribution of fluctuations around steady states
+        # i.e. distribution of all nodes at some time
+        # t = time steps
+        print(' plotting cross-sectional fluctuation distribution (xi-Xi distribution) to %s ...'%file)
+
+        fig = plt.figure()
+        if xlimRange: x = np.linspace(xlimRange[0],xlimRange[1],200)
+        else:
+            minFluc = np.percentile(self.statesFluc[:,t],2)
+            maxFluc = np.percentile(self.statesFluc[:,t],98)
+            x = np.linspace(minFluc,maxFluc,200)
+        density = gaussian_kde(self.statesFluc[:,t])
+        mean = self.statesFluc[:,t].mean()
+        sd = self.statesFluc[:,t].std()
+        plt.plot(x,density(x),label='time=%.4f: $\mu=%.4f,\sigma=%.4f$'%(self.timeStep*t,mean,sd),c='k')
+        if ylimRange: plt.ylim(ylimRange)
+        else: plt.ylim(bottom=0)
+        if title: plt.title(title)
+        plt.xlabel('fluctuation $x_i-X_i$')
+        plt.legend(loc='lower center')
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
 
     def plotDynamics(self, file, title=None, nodes=None, iterSlice=None, color=None, ylimRange=None, withSteadyStates=False):
         # plot time series data to file
@@ -585,6 +666,7 @@ class network(graph):
         plt.grid()
         fig.tight_layout()
         fig.savefig(file)
+        plt.close()
 
     def printDynamics(self, file, iterSlice=None, lastSlice=False):
         # print time series data to file (csv format)

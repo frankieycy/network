@@ -5,6 +5,7 @@ import network_dynamics_cluster as n
 
 myNet = n.network()
 myNet.loadGraph('DIV25_PREmethod')
+myNet.plotDegreeStrengthDist('(neuron)deg.png','(neuron)stren.png')
 
 # myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.npy','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.npy'])
 # myNet.readDynamics('(neuron_withNoise_sigma=0.5_y0=4)dyn_dt=2e-4_2e4steps.npy')
