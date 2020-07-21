@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last: 13/7/2020
+* last: 21/7/2020
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuron dynamics with an effective network model
 
@@ -33,9 +33,13 @@
     - non-uniform spiking
     - some larger activity, some smaller
 * **goal: replicate neuronal dynamics with model-estimated links and weights**
-* (neuron) parameters (r0,beta1,beta2,y0,sigma) that lead to stable (non-diverging) time series:
+
+* (neuron, synaptic coupling function) parameters (r0,beta1,beta2,y0,sigma) that lead to stable (non-diverging) time series:
     - (100,2,0.5,1,0.5)
     - (10,20,1,1,0.25)
+    - _more later_
+* (neuron, diffusive coupling function) parameters (r0,g_ij multiplier,sigma) that lead to stable (non-diverging) time series:
+    - (10,10,0.25)
     - _more later_
 
 * code:

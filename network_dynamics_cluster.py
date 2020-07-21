@@ -337,12 +337,11 @@ class network(graph):
         # set steady states with a noise-free network
         # or load steady states from file
         # REQUIRE: noiseCovariance = 0 (run a noise-free network separately)
-        print(' setting steady states ...')
-        if file:
+        print(' setting steady states '+('from %s '%file if file else '')+'...')
+        if file: # csv format
             data = np.loadtxt(file,delimiter=',',skiprows=1)
             self.steadyStates = data[1:]
-        else:
-            self.steadyStates = self.states_np[:,-1] # last time step
+        else: self.steadyStates = self.states_np[:,-1] # last time step
 
     def calcTimeAvg(self):
         # compute time average of node states
@@ -354,12 +353,12 @@ class network(graph):
     def setTimeAvg(self, file):
         # load time average of node states from file
         print(' setting time average of states from %s ...'%file)
-        self.avgStates = np.load(file)
+        self.avgStates = np.load(file) # npy format
 
     def printTimeAvg(self, file):
         # print time average of node states to file
         print(' printing time average of states to %s ...'%file)
-        np.save(file,self.avgStates)
+        np.save(file,self.avgStates) # npy format
 
     def calcStatesFluc(self):
         # compute mean & s.d. of fluctuations around steady states
@@ -591,7 +590,28 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
-    def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
+    def plotFlucSdDist(self, file, title=None):
+        # plot distribution of s.d. of fluctuations around steady states
+        print(' plotting fluctuation s.d. distribution (xi-Xi s.d. distribution) to %s ...'%file)
+
+        fig = plt.figure()
+        minFlucSd = np.percentile(self.flucSd,2)
+        maxFlucSd = np.percentile(self.flucSd,98)
+        x = np.linspace(minFlucSd,maxFlucSd,200)
+        density = gaussian_kde(self.flucSd)
+        mean = self.flucSd.mean()
+        sd = self.flucSd.std()
+        plt.plot(x,density(x),label='$\mu=%.4f,\sigma=%.4f$'%(mean,sd),c='k')
+        # plt.plot(x,norm(loc=mean,scale=sd).pdf(x),ls='--')
+        plt.ylim(bottom=0)
+        if title: plt.title(title)
+        plt.xlabel('fluctuation s.d.')
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
+
+    def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None, strenLogScale=False):
         # plot s.d. of fluctuations against degrees & strengths
         print(' plotting s.d. of fluctuations against degrees & strengths to %s & %s ...'%(degreeFile,strengthFile))
 
@@ -607,10 +627,15 @@ class network(graph):
         plt.close()
 
         fig = plt.figure()
-        plt.scatter(self.strengths_in,self.flucSd,label='in-strengths',s=1,c='b')
-        plt.scatter(self.strengths_out,self.flucSd,label='out-strengths',s=1,c='r')
+        if strenLogScale:
+            plt.scatter(np.log(abs(self.strengths_in)),self.flucSd,label='log in-strengths',s=1,c='b')
+            plt.scatter(np.log(abs(self.strengths_out)),self.flucSd,label='log out-strengths',s=1,c='r')
+            plt.xlabel('log strengths')
+        else:
+            plt.scatter(self.strengths_in,self.flucSd,label='in-strengths',s=1,c='b')
+            plt.scatter(self.strengths_out,self.flucSd,label='out-strengths',s=1,c='r')
+            plt.xlabel('strengths')
         if degreeTitle: plt.title(degreeTitle)
-        plt.xlabel('strengths')
         plt.ylabel('s.d. of fluctuation')
         plt.legend()
         fig.tight_layout()
@@ -681,4 +706,5 @@ class network(graph):
 
     def printContFile(self, file):
         # print time series data to cont file (csv format)
+        # NO NEED to prepend '(cont)' to file
         self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
