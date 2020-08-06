@@ -1,8 +1,8 @@
 ## Neuronal Network Analysis
 
-* last: 21/7/2020
+* last: 7/8/2020
 * reconstruct network from dynamics (time series data) of nodes
-* replicate neuron dynamics with an effective network model
+* replicate neuron dynamics with an effective network model (with connectivity computed from an assumed model)
 
 ## Project 1 - toy model
 
@@ -16,9 +16,9 @@
 
 * paper: Reconstructing links in directed networks from noisy dynamics (2017)
 * simulate dynamics based on eq[1] - dynamics governed by intrinsic dynamics, node interaction, noise
-* intrinsic dynamics (dynamics on its own): eq[10] - stable at 1, param r_i=r0
-* coupling function (interaction between nodes): eq[12] - synaptic, param (beta1,beta2,y0)
-* Gaussian white noise (iid.): param sigma
+* **intrinsic dynamics** (dynamics on its own): eq[10] - stable at 1, param r_i=r0
+* **coupling function** (interaction between nodes): eq[12] - synaptic/diffusive, param (beta1,beta2,y0)
+* **Gaussian white noise** (iid.): param sigma
 
 * (case 4) default parameters:
     - random directed weighted graph
@@ -32,15 +32,23 @@
 * experimental observation of neurons:
     - non-uniform spiking
     - some larger activity, some smaller
+
 * **goal: replicate neuronal dynamics with model-estimated links and weights**
 
 * (neuron, synaptic coupling function) parameters (r0,beta1,beta2,y0,sigma) that lead to stable (non-diverging) time series:
     - (100,2,0.5,1,0.5)
     - (10,20,1,1,0.25)
-    - _more later_
+    - this model is not very successful to replicate neuron dynamics
+
 * (neuron, diffusive coupling function) parameters (r0,g_ij multiplier,sigma) that lead to stable (non-diverging) time series:
     - (10,10,0.25)
-    - _more later_
+    - (100,10,1.5)
+    - this model is not very successful to replicate neuron dynamics
+
+* **new research directions**:
+    - does model dynamics resemble (experimental) neuron dynamics?
+    - how do spiking activities of model dynamics vary with different network features (e.g. degrees/strengths)?
+    - does heavy-tailed distribution in coupling strengths explain heavy-tailed spiking activities?
 
 * code:
     - ``network_dynamics_cluster.py``: for use in physics dept clusters

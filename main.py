@@ -4,8 +4,21 @@ import network_dynamics_cluster as n
 # np.random.seed(0)
 
 myNet = n.network()
-myNet.loadGraph('DIV25_PREmethod')
-myNet.plotDegreeStrengthDist('(neuron)deg.png','(neuron)stren.png')
+# myNet.loadGraph('DIV25_PREmethod',multiplier=10)
+
+a = np.load('(neuron_mult10_diffusive_withNoise_sigma=1.5_r0=100)PeakCount_t=0to50_h=1+2sd_d=20.npy')
+b = np.loadtxt('DIV25_spks',usecols=0)
+
+m = a[b>0]
+n = np.log(b[b>0])
+
+fig = plt.figure()
+plt.scatter(m,n,s=1,c='k')
+plt.xlabel('model peak count')
+plt.ylabel('log(neuron peak count)')
+fig.tight_layout()
+fig.savefig('(neuron_mult10_diffusive_withNoise_sigma=1.5_r0=100)PeakCountvsNueronLog.png')
+plt.close()
 
 # myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.npy','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.npy'])
 # myNet.readDynamics('(neuron_withNoise_sigma=0.5_y0=4)dyn_dt=2e-4_2e4steps.npy')
@@ -16,15 +29,15 @@ myNet.plotDegreeStrengthDist('(neuron)deg.png','(neuron)stren.png')
 # myNet.plotFlucDist('flucDist.png',[0,4])
 # myNet.plotFlucSdAgainstDegStren('SdDeg.png','SdStren.png')
 
-size = myNet.size
-sigma = 0.5
-dt = 2e-4 # step size
-T0 = 5e2 # time steps (noise-free network)
-T1 = 6e3 # time steps (noisy network)
-r0 = 10
-r = [r0]*size # coef of intrinsic dynamics
-ic = np.random.uniform(0.9,1.1,size) # initial conditions
-c = 'synaptic' # coupling function
+# size = myNet.size
+# sigma = 0.5
+# dt = 2e-4 # step size
+# T0 = 5e2 # time steps (noise-free network)
+# T1 = 6e3 # time steps (noisy network)
+# r0 = 10
+# r = [r0]*size # coef of intrinsic dynamics
+# ic = np.random.uniform(0.9,1.1,size) # initial conditions
+# c = 'synaptic' # coupling function
 
 # myEmail = 'frankieycy@gmail.com'
 # myPw = 'ycy19990414'

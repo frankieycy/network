@@ -7,7 +7,8 @@ import istarmap
 import numpy as np
 from numba import njit,prange
 from scipy.linalg import logm,inv,cholesky,eig
-from scipy.stats import gaussian_kde,norm
+from scipy.stats import gaussian_kde,norm,expon,lognorm,pareto
+from scipy.signal import find_peaks
 from scipy.sparse import csr_matrix
 from time import time
 from tqdm import tqdm
@@ -87,12 +88,26 @@ class graph:
         self.sparseCoupling = csr_matrix(self.Coupling)
         self.couplingNonZeroIdx = self.sparseCoupling.nonzero()
 
-        # node degrees
+        # node degrees & strengths
         self.degrees_in = self.Adjacency.sum(axis=1)
         self.degrees_out = self.Adjacency.sum(axis=0)
+
+        self.Coupling_pos = np.where(self.Coupling>0,self.Coupling,0)
+        self.Adjacency_pos = (self.Coupling>0).astype(int)
+        self.degrees_posIn = self.Adjacency_pos.sum(axis=1)
+
         with np.errstate(invalid='ignore'):
             self.strengths_in = np.nan_to_num(self.Coupling.sum(axis=1)/self.degrees_in)
             self.strengths_out = np.nan_to_num(self.Coupling.sum(axis=0)/self.degrees_out)
+            self.strengths_posIn = np.nan_to_num(self.Coupling_pos.sum(axis=1)/self.degrees_posIn)
+
+        # node classifications
+        self.idx_PosOut = np.argwhere(self.strengths_out>0).reshape(-1)
+        self.idx_NegOut = np.argwhere(self.strengths_out<0).reshape(-1)
+        self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).reshape(-1)
+        self.idx_PosInNegOut = np.argwhere((self.strengths_in>0)&(self.strengths_out<0)).reshape(-1)
+        self.idx_NegInPosOut = np.argwhere((self.strengths_in<0)&(self.strengths_out>0)).reshape(-1)
+        self.idx_NegInNegOut = np.argwhere((self.strengths_in<0)&(self.strengths_out<0)).reshape(-1)
 
     def calcConnectProb(self):
         # calculate empirical connection probability
@@ -485,6 +500,19 @@ class network(graph):
         print(' - condition (tau max_i |Im lambda_i| < pi) is',
             self.timeStep*np.max(np.imag(eigVal))<np.pi)
 
+    def findPeaks(self, height, distance, iterSlice=None):
+        # find peaks with a defined threshold (height) & separation (distance) for all nodes
+        # peak indeices start at 0
+        print(' finding peaks ...')
+        if not iterSlice: iterSlice = slice(self.iter)
+        self.peakHeight = height
+        self.peakDict = {}
+        self.peakCount = []
+        for i in range(self.size):
+            peaks,_ = find_peaks(self.states_np[i,iterSlice],height=height,distance=distance)
+            self.peakDict[i] = peaks
+            self.peakCount.append(len(peaks))
+
     # plots ===================================================================#
 
     def plotInfoMatrix(self, file, title=None):
@@ -519,7 +547,7 @@ class network(graph):
         x = np.linspace(np.min(M),np.max(M),200)
         density = gaussian_kde(M)
         plt.plot(x,density(x),'k',label='$\sigma=%.1f$'%sd)
-        plt.scatter(M,[0]*len(M),s=5,c='k')
+        plt.scatter(M,[0]*len(M),s=1,c='k')
         plt.axvline(x=-sd,c='k',ls='--')
         plt.axvline(x=+sd,c='k',ls='--')
         plt.ylim(bottom=0)
@@ -531,7 +559,7 @@ class network(graph):
         plt.close()
 
     def plotDegreeStrengthDist(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
-        # plotting degree and strength distribution
+        # plot degree and strength distribution
         print(' plotting degree & strength distribution to %s & %s ...'%(degreeFile,strengthFile))
 
         fig = plt.figure()
@@ -611,13 +639,14 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
-    def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None, strenLogScale=False):
+    def plotFlucSdAgainstDegStren(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None, strenLogScale=False,
+        onlyIn=False, onlyOut=False):
         # plot s.d. of fluctuations against degrees & strengths
         print(' plotting s.d. of fluctuations against degrees & strengths to %s & %s ...'%(degreeFile,strengthFile))
 
         fig = plt.figure()
-        plt.scatter(self.degrees_in,self.flucSd,label='in-degrees',s=1,c='b')
-        plt.scatter(self.degrees_out,self.flucSd,label='out-degrees',s=1,c='r')
+        if not onlyOut: plt.scatter(self.degrees_in,self.flucSd,label='in-degrees',s=1,c='b')
+        if not onlyIn: plt.scatter(self.degrees_out,self.flucSd,label='out-degrees',s=1,c='r')
         if degreeTitle: plt.title(degreeTitle)
         plt.xlabel('degrees')
         plt.ylabel('s.d. of fluctuation')
@@ -628,12 +657,12 @@ class network(graph):
 
         fig = plt.figure()
         if strenLogScale:
-            plt.scatter(np.log(abs(self.strengths_in)),self.flucSd,label='log in-strengths',s=1,c='b')
-            plt.scatter(np.log(abs(self.strengths_out)),self.flucSd,label='log out-strengths',s=1,c='r')
+            if not onlyOut: plt.scatter(np.log(abs(self.strengths_in)),self.flucSd,label='log in-strengths',s=1,c='b')
+            if not onlyIn: plt.scatter(np.log(abs(self.strengths_out)),self.flucSd,label='log out-strengths',s=1,c='r')
             plt.xlabel('log strengths')
         else:
-            plt.scatter(self.strengths_in,self.flucSd,label='in-strengths',s=1,c='b')
-            plt.scatter(self.strengths_out,self.flucSd,label='out-strengths',s=1,c='r')
+            if not onlyOut: plt.scatter(self.strengths_in,self.flucSd,label='in-strengths',s=1,c='b')
+            if not onlyIn: plt.scatter(self.strengths_out,self.flucSd,label='out-strengths',s=1,c='r')
             plt.xlabel('strengths')
         if degreeTitle: plt.title(degreeTitle)
         plt.ylabel('s.d. of fluctuation')
@@ -708,3 +737,247 @@ class network(graph):
         # print time series data to cont file (csv format)
         # NO NEED to prepend '(cont)' to file
         self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
+
+    def plotDynamicsWithPeaks(self, node, file, title=None, iterSlice=None, ylimRange=None, withPeakHeight=False):
+        # plot time series data with peaks to file
+        print(' plotting dynamics with peaks to %s ...'%file)
+        if not iterSlice: iterSlice = slice(self.iter)
+        t = np.array(self.time_[iterSlice])
+        x = self.states_np[node,iterSlice]
+
+        fig = plt.figure(figsize=(12,6))
+        plt.xlim(t[0],t[-1])
+        if ylimRange: plt.ylim(ylimRange)
+        plt.plot(t,x,c='k')
+        plt.plot(t[self.peakDict[node]],x[self.peakDict[node]],'rx')
+        if withPeakHeight: plt.axhline(y=self.peakHeight,c='gray',ls='--')
+        if title: plt.title(title)
+        plt.xlabel('time $t$')
+        plt.ylabel('states $x_j$')
+        plt.grid()
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
+
+    def plotPeakDistInTime(self, file, bins, iterSlice=None):
+        # plot distribution of peaks to file
+        print(' plotting distribution of peaks in time to %s ...'%file)
+        if not iterSlice: iterSlice = slice(self.iter)
+        t = np.array(self.time_[iterSlice])
+        peakIdx = []
+        for i in range(self.size): peakIdx.extend(self.peakDict[i])
+
+        fig = plt.figure(figsize=(12,6))
+        freq,edge = np.histogram(t[peakIdx],bins=bins)
+        plt.scatter(edge[:-1],freq,s=1,c='k')
+        plt.xlim(t[0],t[-1])
+        plt.xlabel('time $t$')
+        plt.ylabel('peak count')
+        plt.grid()
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
+
+    def plotRaster(self, file, node, height, iterSlice=None, title=None):
+        # plot raster plot to file
+        print(' plotting raster plot to %s ...'%file)
+        if not iterSlice: iterSlice = slice(self.iter)
+        raster = self.states_np[node,iterSlice]>height
+
+        fig = plt.figure(figsize=(12,6))
+        plt.imshow(raster,cmap='Greys',aspect='auto')
+        if title: plt.title(title)
+        plt.xlabel('time $t$')
+        plt.ylabel('node index')
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
+
+    def plotPeakCountDist(self, file, logProb=False, logPeakCount=False):
+        # plot disrtibution of peak count to file
+        print(' plotting disrtibution of peak count to %s ...'%file)
+        if logPeakCount: peakCount = np.log(self.peakCount[self.peakCount>0])
+        else: peakCount = self.peakCount
+
+        fig = plt.figure()
+        mean = peakCount.mean()
+        sd = peakCount.std()
+        x = np.linspace(np.min(peakCount),np.max(peakCount),200)
+        density = gaussian_kde(peakCount)
+        plt.plot(x,np.log(density(x)) if logProb else density(x),'k')
+        # plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'k--')
+        plt.xlim(np.max(np.min(peakCount),0))
+        plt.xlabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
+
+    def plotPeakCountAgainstDegStren(self, file, logPeakCount=False):
+        # plot peak count against strengths to file
+        # LATER: change to log-scale axis ticks
+        print(' plotting peak count against strengths to %s ...'%(file+'(*)PeakCountAgainst*.png'))
+        if logPeakCount: peakCount = np.log(self.peakCount)
+        else: peakCount = self.peakCount
+        #======================================================================#
+        # excitatory nodes
+        fig = plt.figure()
+        idx = self.idx_PosOut
+        plt.scatter(np.log(self.degrees_in[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes')
+        plt.xlabel('$\log(k_\mathrm{in})$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstLogKin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_PosOut
+        plt.scatter(np.log(self.degrees_out[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes')
+        plt.xlabel('$\log(k_\mathrm{out})$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstLogKout.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_PosOut
+        plt.scatter(self.strengths_out[idx],peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes')
+        plt.xlabel('$s_\mathrm{out}$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSout.png')
+        plt.close()
+        #======================================================================#
+        # inhibitory nodes
+        fig = plt.figure()
+        idx = self.idx_NegOut
+        plt.scatter(np.log(self.degrees_in[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes')
+        plt.xlabel('$\log(k_\mathrm{in})$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstLogKin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_NegOut
+        plt.scatter(np.log(self.degrees_out[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes')
+        plt.xlabel('$\log(k_\mathrm{out})$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstLogKout.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_NegOut
+        plt.scatter(abs(self.strengths_out[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes')
+        plt.xlabel('$|s_\mathrm{out}|$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstAbsSout.png')
+        plt.close()
+        #======================================================================#
+        # x-axis: strengths_in
+        fig = plt.figure()
+        idx = self.idx_PosInPosOut
+        plt.scatter(self.strengths_in[idx],peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes ($s_\mathrm{in}>0$)')
+        plt.xlabel('$s_\mathrm{in}$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosInPosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_PosInNegOut
+        plt.scatter(self.strengths_in[idx],peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes ($s_\mathrm{in}>0$)')
+        plt.xlabel('$s_\mathrm{in}$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosInNegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_NegInPosOut
+        plt.scatter(abs(self.strengths_in[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes ($s_\mathrm{in}<0$)')
+        plt.xlabel('$|s_\mathrm{in}|$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegInPosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstAbsSin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_NegInNegOut
+        plt.scatter(abs(self.strengths_in[idx]),peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes ($s_\mathrm{in}<0$)')
+        plt.xlabel('$|s_\mathrm{in}|$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegInNegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstAbsSin.png')
+        plt.close()
+        #======================================================================#
+        # x-axis: strengths_posIn
+        fig = plt.figure()
+        idx = self.idx_PosOut
+        plt.scatter(self.strengths_posIn[idx],peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('excitatory nodes')
+        plt.xlabel('$s^+_\mathrm{in}$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(PosOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSposin.png')
+        plt.close()
+
+        fig = plt.figure()
+        idx = self.idx_NegOut
+        plt.scatter(self.strengths_posIn[idx],peakCount[idx],s=1,c='k')
+        plt.xlim(left=0)
+        plt.title('inhibitory nodes')
+        plt.xlabel('$s^+_\mathrm{in}$')
+        plt.ylabel('log(peak count)' if logPeakCount else 'peak count')
+        fig.tight_layout()
+        fig.savefig(file+'(NegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSposin.png')
+        plt.close()
+
+def plotQQ(x,y,file,xlab,ylab,title=None):
+    # QQ plot of two sets of data
+    print(' plotting QQ plot to %s ...'%file)
+    percentileX = [(i+1)/(len(y)+1) for i in range(len(y))]
+
+    # distribution params modifiable
+    if x=='norm': sortX = norm.ppf(percentileX)
+    elif x=='expon': sortX = expon.ppf(percentileX)
+    elif x=='lognorm': sortX = lognorm.ppf(percentileX,s=1)
+    elif x=='pareto': sortX = pareto.ppf(percentileX,b=0.75)
+    else: sortX = np.sort(x)
+    sortY = np.sort(y)
+
+    fig = plt.figure()
+    plt.scatter(sortX,sortY,s=1,c='k')
+    if x=='norm':
+        mean = np.mean(y)
+        sd = np.std(y)
+        normY = mean+sd*sortX
+        # plt.plot(sortX,normY,'r--')
+    if title: plt.title(title)
+    plt.xlabel(xlab)
+    plt.ylabel(ylab)
+    fig.tight_layout()
+    fig.savefig(file)
+    plt.close()
