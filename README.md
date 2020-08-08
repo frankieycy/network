@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last: 7/8/2020
+* last: 8/8/2020
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuron dynamics with an effective network model (with connectivity computed from an assumed model)
 
@@ -12,13 +12,15 @@
 * code:
     - ``network.py``
 
-## Project 2a - (FYP Prelim) simulated dynamics, connection extraction
+## Project 2 - (FYP) neuronal network
 
 * paper: Reconstructing links in directed networks from noisy dynamics (2017)
 * simulate dynamics based on eq[1] - dynamics governed by intrinsic dynamics, node interaction, noise
 * **intrinsic dynamics** (dynamics on its own): eq[10] - stable at 1, param r_i=r0
 * **coupling function** (interaction between nodes): eq[12] - synaptic/diffusive, param (beta1,beta2,y0)
 * **Gaussian white noise** (iid.): param sigma
+
+---
 
 * (case 4) default parameters:
     - random directed weighted graph
@@ -29,25 +31,36 @@
     - step size = 5e-4, time steps = 2e6
     - subject to modifications for different test cases
 
+---
+
+* [1] **question: replicate neuronal dynamics with model-estimated links and weights**
+    - from time series data, links and weights were estimated from an assumed network model
+    - can the network constructed from those links and weights recover features in the time series data?
+
 * experimental observation of neurons:
     - non-uniform spiking
-    - some larger activity, some smaller
-
-* **goal: replicate neuronal dynamics with model-estimated links and weights**
+    - some nodes have more prominent spiking activities, some less
 
 * (neuron, synaptic coupling function) parameters (r0,beta1,beta2,y0,sigma) that lead to stable (non-diverging) time series:
     - (100,2,0.5,1,0.5)
     - (10,20,1,1,0.25)
-    - this model is not very successful to replicate neuron dynamics
+    - _this model is not very successful in replicating neuron dynamics_
 
 * (neuron, diffusive coupling function) parameters (r0,g_ij multiplier,sigma) that lead to stable (non-diverging) time series:
     - (10,10,0.25)
     - (100,10,1.5)
-    - this model is not very successful to replicate neuron dynamics
+    - _this model is not very successful in replicating neuron dynamics_
 
-* **new research directions**:
-    - does model dynamics resemble (experimental) neuron dynamics?
-    - how do spiking activities of model dynamics vary with different network features (e.g. degrees/strengths)?
+* **findings**:
+    - network connectivity does not fully explain neuron spiking activities
+    - either neuron dynamics may not fit into the network framework (this runs counter to our intuition), or
+    - the model oversimplifies neuron dynamics (i.e. may require other elements like periodic firing)
+
+---
+
+* [2] **new research directions**:
+    - does model dynamics resemble (experimental) neuron dynamics? how do their distributions of spikes differ?
+    - how do spiking activities of model dynamics vary with different network features (e.g. degrees/strengths)? here we are concerned only with the model itself though it is unrealistic
     - does heavy-tailed distribution in coupling strengths explain heavy-tailed spiking activities?
 
 * code:

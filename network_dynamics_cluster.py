@@ -83,6 +83,26 @@ class graph:
         self.Coupling = np.random.normal(couplingMean,couplingSpread,size=(size,size))*self.Adjacency
         self.initialize()
 
+    def setAsGaussianRefGraph(self):
+        # (reference/expt control) random directed graph with with Gaussian couplings
+        print(' setting as Gaussian reference graph ...')
+        Coupling = self.Coupling
+
+        posCoupling = Coupling[Coupling>0]
+        negCoupling = Coupling[Coupling<0]
+        idx_pos = np.where(Coupling>0)
+        idx_neg = np.where(Coupling<0)
+        mu_pos = posCoupling.mean()
+        sigma_pos = posCoupling.std()
+        mu_neg = negCoupling.mean()
+        sigma_neg = negCoupling.std()
+
+        self.Coupling = np.zeros((self.size,self.size))
+        self.Coupling[idx_pos] = abs(np.random.normal(mu_pos,sigma_pos,len(idx_pos[0])))
+        self.Coupling[idx_neg] = -abs(np.random.normal(mu_neg,sigma_neg,len(idx_neg[0])))
+
+        self.initialize()
+
     def initialize(self):
         # sparse representation
         self.sparseCoupling = csr_matrix(self.Coupling)
@@ -102,12 +122,12 @@ class graph:
             self.strengths_posIn = np.nan_to_num(self.Coupling_pos.sum(axis=1)/self.degrees_posIn)
 
         # node classifications
-        self.idx_PosOut = np.argwhere(self.strengths_out>0).reshape(-1)
-        self.idx_NegOut = np.argwhere(self.strengths_out<0).reshape(-1)
-        self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).reshape(-1)
-        self.idx_PosInNegOut = np.argwhere((self.strengths_in>0)&(self.strengths_out<0)).reshape(-1)
-        self.idx_NegInPosOut = np.argwhere((self.strengths_in<0)&(self.strengths_out>0)).reshape(-1)
-        self.idx_NegInNegOut = np.argwhere((self.strengths_in<0)&(self.strengths_out<0)).reshape(-1)
+        self.idx_PosOut = np.argwhere(self.strengths_out>0).flatten()
+        self.idx_NegOut = np.argwhere(self.strengths_out<0).flatten()
+        self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).flatten()
+        self.idx_PosInNegOut = np.argwhere((self.strengths_in>0)&(self.strengths_out<0)).flatten()
+        self.idx_NegInPosOut = np.argwhere((self.strengths_in<0)&(self.strengths_out>0)).flatten()
+        self.idx_NegInNegOut = np.argwhere((self.strengths_in<0)&(self.strengths_out<0)).flatten()
 
     def calcConnectProb(self):
         # calculate empirical connection probability
@@ -560,6 +580,7 @@ class network(graph):
 
     def plotDegreeStrengthDist(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
         # plot degree and strength distribution
+        # require only graph (time series not necessary)
         print(' plotting degree & strength distribution to %s & %s ...'%(degreeFile,strengthFile))
 
         fig = plt.figure()
@@ -805,7 +826,7 @@ class network(graph):
         x = np.linspace(np.min(peakCount),np.max(peakCount),200)
         density = gaussian_kde(peakCount)
         plt.plot(x,np.log(density(x)) if logProb else density(x),'k')
-        # plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'k--')
+        plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'k--')
         plt.xlim(np.max(np.min(peakCount),0))
         plt.xlabel('log(peak count)' if logPeakCount else 'peak count')
         fig.tight_layout()
@@ -954,6 +975,45 @@ class network(graph):
         fig.tight_layout()
         fig.savefig(file+'(NegOut)'+('Log' if logPeakCount else '')+'PeakCountAgainstSposin.png')
         plt.close()
+
+    def plotAutocorr(self, nodes, Nlags, autocorrFile, logAutocorrFile, title=None):
+        # plot autocorrelations to file
+        print(' plotting autocorrelations & log autocorrelations to %s & %s ...'%(autocorrFile,logAutocorrFile))
+        myAutocorrs = []
+        lags = list(range(1,Nlags+1))
+        colors = list(map(tuple,np.random.rand(self.size,3)))
+
+        fig = plt.figure()
+        for i in nodes:
+            myAutocorr = [autocorr(np.diff(self.states_np[i]),t) for t in lags]
+            myAutocorrs.append(myAutocorr)
+            plt.scatter(lags,myAutocorr,s=1,color=colors[i])
+        meanAutocorr = np.mean(myAutocorrs,axis=0)
+        plt.plot(lags,meanAutocorr,'k--')
+        # 99% likelihood bound
+        plt.axhline(y=2.33/np.sqrt(self.iter),c='r',ls='--')
+        plt.axhline(y=-2.33/np.sqrt(self.iter),c='r',ls='--')
+        plt.xlim(0,Nlags)
+        if title: plt.title(title)
+        plt.xlabel('time lag')
+        plt.ylabel('autocorrelation')
+        fig.tight_layout()
+        fig.savefig(autocorrFile)
+        plt.close()
+
+        fig = plt.figure()
+        plt.plot(lags,np.log(abs(meanAutocorr)),'k')
+        plt.xlim(0,Nlags)
+        if title: plt.title(title)
+        plt.xlabel('time lag')
+        plt.ylabel('log(autocorrelation)')
+        fig.tight_layout()
+        fig.savefig(logAutocorrFile)
+        plt.close()
+
+def autocorr(x,t=1):
+    # autocorrelation
+    return np.corrcoef(x[:-t],x[t:])[0,1]
 
 def plotQQ(x,y,file,xlab,ylab,title=None):
     # QQ plot of two sets of data
