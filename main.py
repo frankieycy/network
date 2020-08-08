@@ -1,3 +1,5 @@
+# this file does the actual work
+# useful code sections are cached below
 import numpy as np
 import matplotlib.pyplot as plt
 import network_dynamics_cluster as n
@@ -5,20 +7,23 @@ import network_dynamics_cluster as n
 
 myNet = n.network()
 # myNet.loadGraph('DIV25_PREmethod',multiplier=10)
+# myNet.setAsGaussianRefGraph()
+# myNet.plotDegreeStrengthDist('myDeg.png','myStren.png')
 
-a = np.load('(neuron_mult10_diffusive_withNoise_sigma=1.5_r0=100)PeakCount_t=0to50_h=1+2sd_d=20.npy')
-b = np.loadtxt('DIV25_spks',usecols=0)
+# myNet.peakCount = np.load('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100_ref)PeakCount_t=0to50_h=1+2sd_d=20.npy')
+# myNet.plotPeakCountAgainstDegStren('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100_ref)')
+# myNet.plotPeakCountDist('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100_ref)PeakCountDist.png')
 
-m = a[b>0]
-n = np.log(b[b>0])
-
-fig = plt.figure()
-plt.scatter(m,n,s=1,c='k')
-plt.xlabel('model peak count')
-plt.ylabel('log(neuron peak count)')
-fig.tight_layout()
-fig.savefig('(neuron_mult10_diffusive_withNoise_sigma=1.5_r0=100)PeakCountvsNueronLog.png')
-plt.close()
+# a = np.load('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100_ref)PeakCount_t=0to50_h=1+2sd_d=20.npy')
+# b = np.load('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100)PeakCount_t=0to50_h=1+2sd_d=20.npy')
+#
+# fig = plt.figure()
+# plt.scatter(a,b,s=1,c='k')
+# plt.xlabel('reference model peak count')
+# plt.ylabel('model peak count')
+# fig.tight_layout()
+# fig.savefig('(neuron_mult10_diffusive_withNoise_sigma=1.4_r0=100)PeakvsRef.png')
+# plt.close()
 
 # myNet.readDynamics(['(neuron_noiseFree)dyn_dt=2e-4_5e3steps.npy','(neuron_noiseFree)dyn_dt=2e-4_5e3to6e3steps.npy'])
 # myNet.readDynamics('(neuron_withNoise_sigma=0.5_y0=4)dyn_dt=2e-4_2e4steps.npy')

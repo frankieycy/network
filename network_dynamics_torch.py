@@ -1,5 +1,7 @@
 # IMPORTANT: refer to network_dynamics_cluster.py for the most updated codes
-# Project 2a - (FYP Prelim) simulated dynamics, connection extraction
+# this file is NO LONGER maintained
+#==============================================================================#
+# Project 2 - (FYP) neuronal network
 # PyTorch handles computationally intensive calculations (for large networks ~ 10^3 nodes)
 # search '##' for modifiable parameters
 import util

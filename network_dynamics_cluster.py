@@ -1,6 +1,8 @@
-# Project 2a - (FYP Prelim) simulated dynamics, connection extraction
+# this is THE MAIN FILE to edit
+# for use in phy dept clusters
+#==============================================================================#
+# Project 2 - (FYP) neuronal network
 # numba handles computationally intensive calculations
-# for use in phy dept clusters (this is the main file to edit)
 # search '##' for modifiable model parameters
 import util
 import istarmap
