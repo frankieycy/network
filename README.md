@@ -1,6 +1,7 @@
 ## Neuronal Network Analysis
 
-* last: 8/8/2020
+* last: 30/8/2020
+* _the README just documents my work and is not meant to be self-contained_
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuron dynamics with an effective network model (with connectivity computed from an assumed model)
 
@@ -12,12 +13,12 @@
 * code:
     - ``network.py``
 
-## Project 2 - (FYP) neuronal network
+## Project 2 - (FYP) synaptic/diffusive neuronal network
 
 * paper: Reconstructing links in directed networks from noisy dynamics (2017)
 * simulate dynamics based on eq[1] - dynamics governed by intrinsic dynamics, node interaction, noise
-* **intrinsic dynamics** (dynamics on its own): eq[10] - stable at 1, param r_i=r0
-* **coupling function** (interaction between nodes): eq[12] - synaptic/diffusive, param (beta1,beta2,y0)
+* **intrinsic dynamics** (dynamics on its own): eq[10] - _logistic_, stable point at 1, param r_i = r0
+* **coupling function** (interaction between nodes): eq[12] - _synaptic/diffusive_, param (beta1, beta2, y0)
 * **Gaussian white noise** (iid.): param sigma
 
 ---
@@ -26,7 +27,7 @@
     - random directed weighted graph
     - size = 100, connection probability = 0.2, weights ~ N(10,2), noise sigma = 1
     - intrinsic dynamics coefficient: r_i = 10
-    - synaptic coupling function: beta1,beta2,y0 = 2,0.5,4
+    - synaptic coupling function: (beta1, beta2, y0) = (2, 0.5, 4)
     - initial conditions: uniform[0,5]
     - step size = 5e-4, time steps = 2e6
     - subject to modifications for different test cases
@@ -38,17 +39,17 @@
     - can the network constructed from those links and weights recover features in the time series data?
 
 * experimental observation of neurons:
-    - non-uniform spiking
-    - some nodes have more prominent spiking activities, some less
+    - non-Gaussian, heavy-tailed spiking
+    - a majority of nodes have zero to one spike while some nodes have far more spikes (a few orders greater) than others
 
-* (neuron, synaptic coupling function) parameters (r0,beta1,beta2,y0,sigma) that lead to stable (non-diverging) time series:
-    - (100,2,0.5,1,0.5)
-    - (10,20,1,1,0.25)
+* (synaptic coupling function) parameters (r0, beta1, beta2, y0, sigma) that lead to stable (non-diverging) time series:
+    - (100, 2, 0.5, 1, 0.5)
+    - (10, 20, 1, 1, 0.25)
     - _this model is not very successful in replicating neuron dynamics_
 
-* (neuron, diffusive coupling function) parameters (r0,g_ij multiplier,sigma) that lead to stable (non-diverging) time series:
-    - (10,10,0.25)
-    - (100,10,1.5)
+* (diffusive coupling function) parameters (r0, g_ij multiplier, sigma) that lead to stable (non-diverging) time series:
+    - (10, 10, 0.25)
+    - (100, 10, 1.5)
     - _this model is not very successful in replicating neuron dynamics_
 
 * **findings**:
@@ -59,9 +60,20 @@
 ---
 
 * [2] **new research directions**:
-    - does model dynamics resemble (experimental) neuron dynamics? how do their distributions of spikes differ?
+    - does model dynamics resemble real neuron dynamics? how do their distributions of spikes differ?
     - how do spiking activities of model dynamics vary with different network features (e.g. degrees/strengths)? here we are concerned only with the model itself though it is unrealistic
     - does heavy-tailed distribution in coupling strengths explain heavy-tailed spiking activities?
 
-* code:
-    - ``network_dynamics_cluster.py``: for use in physics dept clusters
+## Project 3 - (FYP) FHN neuronal network
+
+* same dynamical equation - eq[1], but with the logistic intrinsic dynamics replaced by the FHN one
+* this is a 2D model, i.e. each node has (x_i, y_i) states
+
+* (diffusive coupling function) parameters (epsilon, alpha, sigma) that lead to spiking dynamics:
+    - (0.01, 0.95, 2): both noise-free and with-noise time series have spikes
+    - (0.1, 0.95, 2): both noise-free and with-noise time series have spikes (this set most resembles real neuron dynamics)
+    - (0.1, 1, 2): the noise-free time series have decaying oscillations, but the with-noise time series have spikes
+    - (0.1, 1.05, 2): the noise-free time series have no spiking/oscillatory activities, but the with-noise time series have spikes
+
+* code: (for both project 2 & 3)
+    - ``network_dynamics_cluster.py``: for use in physics department clusters

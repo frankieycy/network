@@ -5,7 +5,7 @@
 # numba handles computationally intensive calculations
 # search '##' for modifiable model parameters
 import util
-import istarmap
+# import istarmap
 import numpy as np
 from numba import njit,prange
 from scipy.linalg import logm,inv,cholesky,eig
@@ -19,6 +19,14 @@ import matplotlib.pyplot as plt
 from matplotlib import rc
 # rc('text', usetex=True) # comment this out if no tex distribution is installed
 plt.switch_backend('agg')
+
+def signedNormal(sign, mean=0, spread=1):
+    # normal random number restricted to be positive
+    assert (sign=='pos' or sign=='neg')
+    a = np.random.normal(mean,spread)
+    if sign=='pos' and a>0: return a
+    elif sign=='neg' and a<0: return a
+    else: return signedNormal(sign,mean,spread)
 
 @njit
 def normalVector(mean=0, spread=1, size=1):
@@ -69,6 +77,14 @@ class graph:
 
         self.initialize()
 
+    def loadNpGraph(self, couplingFile):
+        # load graph (connectivity & couplings) from npy file
+        print(' loading coupling file from %s ...'%couplingFile)
+        self.Coupling = np.load(couplingFile)
+        self.size = self.Coupling.shape[0]
+        self.Adjacency = (self.Coupling!=0).astype(int)
+        self.initialize()
+
     def randomDirectedWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
         # random directed graph with with Gaussian couplings
         self.internalGraph = True
@@ -100,8 +116,10 @@ class graph:
         sigma_neg = negCoupling.std()
 
         self.Coupling = np.zeros((self.size,self.size))
-        self.Coupling[idx_pos] = abs(np.random.normal(mu_pos,sigma_pos,len(idx_pos[0])))
-        self.Coupling[idx_neg] = -abs(np.random.normal(mu_neg,sigma_neg,len(idx_neg[0])))
+        self.Coupling[idx_pos] = [signedNormal('pos',mu_pos,sigma_pos) for _ in range(len(idx_pos[0]))]
+        self.Coupling[idx_neg] = [signedNormal('neg',mu_neg,sigma_neg) for _ in range(len(idx_neg[0]))]
+        # self.Coupling[idx_pos] = abs(np.random.normal(mu_pos,sigma_pos,len(idx_pos[0])))
+        # self.Coupling[idx_neg] = -abs(np.random.normal(mu_neg,sigma_neg,len(idx_neg[0])))
 
         self.initialize()
 
@@ -124,6 +142,8 @@ class graph:
             self.strengths_posIn = np.nan_to_num(self.Coupling_pos.sum(axis=1)/self.degrees_posIn)
 
         # node classifications
+        self.idx_PosIn = np.argwhere(self.strengths_in>0).flatten()
+        self.idx_NegIn = np.argwhere(self.strengths_in<0).flatten()
         self.idx_PosOut = np.argwhere(self.strengths_out>0).flatten()
         self.idx_NegOut = np.argwhere(self.strengths_out<0).flatten()
         self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).flatten()
@@ -163,6 +183,15 @@ class network(graph):
         # set up email notifier
         self.emailNotify = True
         self.emailHandler = util.emailHandler(emailFrom, emailPw, emailTo)
+
+    @staticmethod
+    @njit
+    def intrinsicFunc_FHNfast(size,eps,x,y):
+        # intrinsic dynamics (fast version)
+        a = np.empty(size)
+        for i in range(size):
+            a[i] = (x[i]-x[i]*x[i]*x[i]/3-y[i])/eps
+        return a
 
     @staticmethod
     @njit
@@ -208,6 +237,26 @@ class network(graph):
 
     # initialization ==========================================================#
 
+    def initDynamics_FHN(self, initStates, initStatesY, epsilon, alpha, noiseCovariance):
+        # initialize node states and set intrinsic coef & noise cov
+        print(' initializing dynamics ...')
+        self.states_ = {i:[] for i in range(self.size)}
+        self.time = 0
+        self.time_ = [0]
+        self.iter = 1
+
+        self.epsilon = epsilon
+        self.alpha = alpha
+
+        self.initStates = np.array(initStates)
+        self.initStatesY = np.array(initStatesY)
+        self.states = self.initStates
+        self.statesY = self.initStatesY
+        for i in range(self.size):
+            self.states_[i].append(self.states[i])
+
+        self.setIntrinsicAndNoise([],noiseCovariance)
+
     def initDynamics(self, initStates, intrinsicCoef, noiseCovariance):
         # initialize node states and set intrinsic coef & noise cov
         print(' initializing dynamics ...')
@@ -235,6 +284,15 @@ class network(graph):
             self.sigma = self.noiseChol[0,0]
 
     # initialization from file ================================================#
+
+    def continueDynamics_FHN(self, file, fileY, epsilon, alpha, noiseCovariance):
+        # continue dynamics from read time series data
+        print(' initializing dynamics from %s & %s ...'%(file,fileY))
+        self.epsilon = epsilon
+        self.alpha = alpha
+        self.statesY = np.load(fileY) # fileY is npy file
+        self.readDynamics(file)
+        self.setIntrinsicAndNoise([], noiseCovariance)
 
     def continueDynamics(self, file, intrinsicCoef, noiseCovariance):
         # continue dynamics from read time series data
@@ -280,6 +338,25 @@ class network(graph):
         np.save(file,np.vstack((self.time_,self.states_np)).T)
 
     # generate dynamics =======================================================#
+
+    def getStateChanges_FHNx(self):
+        # instantaneous node changes
+        WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
+            (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
+            shape=(self.size,self.size)
+        ))
+
+        randomVector = np.random.normal(size=self.size)
+
+        changes = (self.intrinsicFunc_FHNfast(self.size,self.epsilon,self.states,self.statesY)+\
+            WeightedCoupling.sum(axis=1).A1)*self.timeStep+\
+            self.sigma*randomVector*self.sqrtTimeStep
+
+        return changes
+
+    def getStateChanges_FHNy(self):
+        # instantaneous node changes
+        return (self.states+self.alpha)*self.timeStep
 
     def getStateChanges(self):
         # instantaneous node changes
@@ -331,7 +408,13 @@ class network(graph):
         # startTimer = time()
 
         while self.iter<totIter:
-            self.states += self.getStateChanges()
+            #### FHN ####
+            states_new = self.states+self.getStateChanges_FHNx()
+            self.statesY += self.getStateChanges_FHNy()
+            self.states = states_new
+            #### logistic ####
+            # self.states += self.getStateChanges()
+
             for i in range(self.size):
                 self.states_[i].append(self.states[i])
             self.time += self.timeStep
@@ -618,6 +701,51 @@ class network(graph):
         fig.savefig(strengthFile)
         plt.close()
 
+    def plotStrengthDist(self, file):
+        # plot strength distribution
+        # require only graph (time series not necessary)
+        print(' plotting log in- & out-strength distribution to %s & %s ...'%(file+'logInstren.png',file+'logOutstren.png'))
+
+        fig = plt.figure()
+        a = np.log(self.strengths_in[self.idx_PosIn])
+        b = np.log(abs(self.strengths_in[self.idx_NegIn]))
+        a = (a-a.mean())/a.std()
+        b = (b-b.mean())/b.std()
+        minStren = np.percentile(np.concatenate([a,b]),0)
+        maxStren = np.percentile(np.concatenate([a,b]),100)
+        x = np.linspace(minStren,maxStren,200)
+        density_a = gaussian_kde(a)
+        density_b = gaussian_kde(b)
+        plt.plot(x,density_a(x),'r',label='$\log(s_\mathrm{in})(>0)$')
+        plt.plot(x,density_b(x),'b',label='$\log(|s_\mathrm{in}|)(<0)$')
+        plt.plot(x,norm(loc=0,scale=1).pdf(x),'k--')
+        plt.ylim(bottom=0)
+        plt.xlabel('log(strengths)')
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(file+'logInStren.png')
+        plt.close()
+
+        fig = plt.figure()
+        a = np.log(self.strengths_out[self.idx_PosOut])
+        b = np.log(abs(self.strengths_out[self.idx_NegOut]))
+        a = (a-a.mean())/a.std()
+        b = (b-b.mean())/b.std()
+        minStren = np.percentile(np.concatenate([a,b]),0)
+        maxStren = np.percentile(np.concatenate([a,b]),100)
+        x = np.linspace(minStren,maxStren,200)
+        density_a = gaussian_kde(a)
+        density_b = gaussian_kde(b)
+        plt.plot(x,density_a(x),'r',label='$\log(s_\mathrm{out})(>0)$')
+        plt.plot(x,density_b(x),'b',label='$\log(|s_\mathrm{out}|)(<0)$')
+        plt.plot(x,norm(loc=0,scale=1).pdf(x),'k--')
+        plt.ylim(bottom=0)
+        plt.xlabel('log(strengths)')
+        plt.legend()
+        fig.tight_layout()
+        fig.savefig(file+'logOutStren.png')
+        plt.close()
+
     def plotFlucDist(self, file, nodes, title=None):
         # plot distribution of fluctuations around steady states
         print(' plotting fluctuation distribution (xi-Xi distribution) to %s ...'%file)
@@ -761,6 +889,13 @@ class network(graph):
         # NO NEED to prepend '(cont)' to file
         self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
 
+    def printContFile_FHN(self, file, fileY):
+        # print time series data to cont file (csv format)
+        # NO NEED to prepend '(cont)' to file
+        self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
+        print(' printing dynamics to %s ...'%('(cont)'+fileY))
+        np.save('(cont)'+fileY,self.statesY) # fileY is npy file
+
     def plotDynamicsWithPeaks(self, node, file, title=None, iterSlice=None, ylimRange=None, withPeakHeight=False):
         # plot time series data with peaks to file
         print(' plotting dynamics with peaks to %s ...'%file)
@@ -816,20 +951,25 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
-    def plotPeakCountDist(self, file, logProb=False, logPeakCount=False):
+    def plotPeakCountDist(self, file, logProb=False, logPeakCount=False,
+        histogram=False, align='mid', bins=10):
         # plot disrtibution of peak count to file
         print(' plotting disrtibution of peak count to %s ...'%file)
         if logPeakCount: peakCount = np.log(self.peakCount[self.peakCount>0])
         else: peakCount = self.peakCount
+        minPeak = np.min(peakCount)
+        maxPeak = np.max(peakCount)
 
         fig = plt.figure()
         mean = peakCount.mean()
         sd = peakCount.std()
-        x = np.linspace(np.min(peakCount),np.max(peakCount),200)
-        density = gaussian_kde(peakCount)
-        plt.plot(x,np.log(density(x)) if logProb else density(x),'k')
-        plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'k--')
-        plt.xlim(np.max(np.min(peakCount),0))
+        x = np.linspace(minPeak,maxPeak,200)
+        plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'r--')
+        if histogram: plt.hist(peakCount,color='k',align=align,density=True,bins=bins)
+        else:
+            density = gaussian_kde(peakCount)
+            plt.plot(x,np.log(density(x)) if logProb else density(x),'k')
+        plt.xlim(np.max(minPeak,0),maxPeak)
         plt.xlabel('log(peak count)' if logPeakCount else 'peak count')
         fig.tight_layout()
         fig.savefig(file)
