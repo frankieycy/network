@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last: 30/8/2020
+* last update: 8/10/2020
 * _the README just documents my work and is not meant to be self-contained_
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuron dynamics with an effective network model (with connectivity computed from an assumed model)
@@ -75,5 +75,15 @@
     - (0.1, 1, 2): the noise-free time series have decaying oscillations, but the with-noise time series have spikes
     - (0.1, 1.05, 2): the noise-free time series have no spiking/oscillatory activities, but the with-noise time series have spikes
 
+* This model is GREAT!
+    - exhibits realistic spiking patterns
+    - recovers heavy-tailed nature of spike tail
+    - rich correlations between spike counts and network features
+    - see report for full analysis
+
 * code: (for both project 2 & 3)
     - ``network_dynamics_cluster.py``: for use in physics department clusters
+
+---
+
+* This marks the end of my FYP part I.

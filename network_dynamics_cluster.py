@@ -3,9 +3,9 @@
 #==============================================================================#
 # Project 2 - (FYP) neuronal network
 # numba handles computationally intensive calculations
-# search '##' for modifiable model parameters
 import util
 # import istarmap
+import pandas as pd
 import numpy as np
 from numba import njit,prange
 from scipy.linalg import logm,inv,cholesky,eig
@@ -22,6 +22,8 @@ plt.switch_backend('agg')
 
 def signedNormal(sign, mean=0, spread=1):
     # normal random number restricted to be positive
+    # WARNING: resulting distribution is non-normal due to sign restriction
+    # for use in setAsGaussianRefGraph()
     assert (sign=='pos' or sign=='neg')
     a = np.random.normal(mean,spread)
     if sign=='pos' and a>0: return a
@@ -31,6 +33,7 @@ def signedNormal(sign, mean=0, spread=1):
 @njit
 def normalVector(mean=0, spread=1, size=1):
     # vector of normal random numbers (faster than np.random.normal())
+    # SPEED NEEDS VERIFICATION
     a = np.empty(size)
     for i in range(size):
         a[i] = np.random.normal(mean,spread)
@@ -39,6 +42,7 @@ def normalVector(mean=0, spread=1, size=1):
 @njit
 def outer(x,y):
     # outer product (faster than np.outer())
+    # SPEED NEEDS VERIFICATION
     a = np.empty((x.size,y.size))
     for i in range(x.size):
         for j in range(y.size):
@@ -48,6 +52,7 @@ def outer(x,y):
 @njit
 def outerSubtract(x,y):
     # outer subtraction
+    # in vector x and y and return matrix with entries y[j]-x[i]
     a = np.empty((x.size,y.size))
     for i in range(x.size):
         for j in range(y.size):
@@ -58,14 +63,16 @@ def outerSubtract(x,y):
 
 class graph:
     def __init__(self):
-        self.internalGraph = False  # graph is internally generated
+        self.internalGraph = False  # graph is internally generated (via randomDirectedWeightedGraph() etc.)
 
     def loadGraph(self, couplingFile, multiplier=None):
         # load graph (connectivity & couplings) from file
-        # file format: i j Coupling(i->j)
+        # file format: i j Coupling(j->i)
+        # file used: DIV25_PREmethod
+        # unstated node pairs are unconnected
         print(' loading coupling file from %s ...'%couplingFile)
         data = np.loadtxt(couplingFile)
-        if multiplier: data[:,2] *= multiplier
+        if multiplier: data[:,2] *= multiplier # scale the couplings
         indices = list(map(tuple,(data[:,(1,0)]-1).astype(int)))
         size = np.max(indices)+1
 
@@ -79,14 +86,14 @@ class graph:
 
     def loadNpGraph(self, couplingFile):
         # load graph (connectivity & couplings) from npy file
-        print(' loading coupling file from %s ...'%couplingFile)
+        print(' loading npy coupling file from %s ...'%couplingFile)
         self.Coupling = np.load(couplingFile)
         self.size = self.Coupling.shape[0]
         self.Adjacency = (self.Coupling!=0).astype(int)
         self.initialize()
 
     def randomDirectedWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
-        # random directed graph with with Gaussian couplings
+        # random directed graph with Gaussian couplings
         self.internalGraph = True
         self.size = size
         self.Adjacency = (np.random.uniform(size=(size,size))<connectProb).astype(int)
@@ -94,7 +101,7 @@ class graph:
         self.initialize()
 
     def randomUnidirectedWeightedGraph(self, size, connectProb, couplingMean, couplingSpread):
-        # random uni-directed graph with with Gaussian couplings
+        # random uni-directed graph with Gaussian couplings
         self.internalGraph = True
         self.size = size
         self.Adjacency = np.triu((np.random.uniform(size=(size,size))<connectProb).astype(int),k=0)
@@ -102,7 +109,11 @@ class graph:
         self.initialize()
 
     def setAsGaussianRefGraph(self):
-        # (reference/expt control) random directed graph with with Gaussian couplings
+        # USED FOR **LOGISTIC** REFERENCE NETWORKS (BAD METHOD!)
+        # (reference network) random directed graph with Gaussian couplings
+        # positive couplings sampled from a Gaussian constructed from original positive couplings
+        # negative couplings sampled from a Gaussian constructed from original negative couplings
+        # NOTE: this REPLACES original couplings!
         print(' setting as Gaussian reference graph ...')
         Coupling = self.Coupling
 
@@ -123,6 +134,51 @@ class graph:
 
         self.initialize()
 
+    def setAsShuffledRefGraph(self, axis=0):
+        # USED FOR **FHN** REFERENCE NETWORKS
+        # (reference network) graph with shuffled entries in rows (axis=0) or cols (axis=1)
+        # shuffle rows: preserve in-degrees and in-strengths
+        # shuffle cols: preserve out-degrees and out-strengths
+        # NOTE: this REPLACES original couplings!
+        print(' setting as row/col-shuffled reference graph ...')
+        if axis==0: list(map(np.random.shuffle,self.Coupling)) # shuffle entries in rows
+        elif axis==1: # shuffle entries in cols
+            transposeCoupling = self.Coupling.T
+            list(map(np.random.shuffle,transposeCoupling))
+            self.Coupling = transposeCoupling.T
+        self.initialize()
+
+    def setAsEntryShuffledRefGraph(self):
+        # USED FOR **FHN** REFERENCE NETWORKS
+        # (reference network) graph with non-zero entries shuffled
+        # shuffle entries: preserve in- and out-degrees and re-distribute in- and out-strengths
+        # NOTE: this REPLACES original couplings!
+        print(' setting as entry-shuffled reference graph ...')
+        Coupling = self.Coupling
+        nonzeroCoupling = Coupling[Coupling!=0]
+        np.random.shuffle(nonzeroCoupling)
+        idx_nonzero = np.where(Coupling!=0)
+        self.Coupling = np.zeros((self.size,self.size))
+        self.Coupling[idx_nonzero] = nonzeroCoupling
+        self.initialize()
+
+    def setAsEntryReplacedRefGraph(self):
+        # USED FOR **FHN** REFERENCE NETWORKS
+        # (reference network) random directed graph with Gaussian couplings
+        # couplings sampled from a Gaussian constructed from original couplings
+        # replace entries: preserve in- and out-degrees and re-distribute in- and out-strengths
+        # NOTE: this REPLACES original couplings!
+        print(' setting as Gaussian reference graph ...')
+        Coupling = self.Coupling
+        nonzeroCoupling = Coupling[Coupling!=0]
+        mu_nonzero = nonzeroCoupling.mean()
+        sigma_nonzero = nonzeroCoupling.std()
+
+        idx_nonzero = np.where(Coupling!=0)
+        self.Coupling = np.zeros((self.size,self.size))
+        self.Coupling[idx_nonzero] = np.random.normal(mu_nonzero,sigma_nonzero,len(idx_nonzero[0]))
+        self.initialize()
+
     def initialize(self):
         # sparse representation
         self.sparseCoupling = csr_matrix(self.Coupling)
@@ -141,15 +197,15 @@ class graph:
             self.strengths_out = np.nan_to_num(self.Coupling.sum(axis=0)/self.degrees_out)
             self.strengths_posIn = np.nan_to_num(self.Coupling_pos.sum(axis=1)/self.degrees_posIn)
 
-        # node classifications
-        self.idx_PosIn = np.argwhere(self.strengths_in>0).flatten()
-        self.idx_NegIn = np.argwhere(self.strengths_in<0).flatten()
-        self.idx_PosOut = np.argwhere(self.strengths_out>0).flatten()
-        self.idx_NegOut = np.argwhere(self.strengths_out<0).flatten()
-        self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).flatten()
-        self.idx_PosInNegOut = np.argwhere((self.strengths_in>0)&(self.strengths_out<0)).flatten()
-        self.idx_NegInPosOut = np.argwhere((self.strengths_in<0)&(self.strengths_out>0)).flatten()
-        self.idx_NegInNegOut = np.argwhere((self.strengths_in<0)&(self.strengths_out<0)).flatten()
+        # node classifications by signs of strengths (INFREQUENTLY USED)
+        # self.idx_PosIn = np.argwhere(self.strengths_in>0).flatten()
+        # self.idx_NegIn = np.argwhere(self.strengths_in<0).flatten()
+        # self.idx_PosOut = np.argwhere(self.strengths_out>0).flatten()
+        # self.idx_NegOut = np.argwhere(self.strengths_out<0).flatten()
+        # self.idx_PosInPosOut = np.argwhere((self.strengths_in>0)&(self.strengths_out>0)).flatten()
+        # self.idx_PosInNegOut = np.argwhere((self.strengths_in>0)&(self.strengths_out<0)).flatten()
+        # self.idx_NegInPosOut = np.argwhere((self.strengths_in<0)&(self.strengths_out>0)).flatten()
+        # self.idx_NegInNegOut = np.argwhere((self.strengths_in<0)&(self.strengths_out<0)).flatten()
 
     def calcConnectProb(self):
         # calculate empirical connection probability
@@ -171,22 +227,40 @@ class graph:
         # print coupling matrix to file
         np.savetxt(file,self.Coupling,fmt='%.4f',header=cm)
 
+    def printDegStrenToCsv(self, file):
+        # print degree & strength measures to csv file
+        print(' printing degree & strength measures to %s ...'%file)
+        data = {
+            'k_in': self.degrees_in,
+            'k_out': self.degrees_out,
+            'k_posIn': self.degrees_posIn,
+            's_in': self.strengths_in,
+            's_out': self.strengths_out,
+            's_posIn': self.strengths_posIn
+        }
+        dataFrame = pd.DataFrame(data,columns=list(data.keys()))
+        dataFrame.to_csv(file)
+
+#==============================================================================#
 #==============================================================================#
 
 class network(graph):
-    # CONVENTION: underscore refers to a time series
+    # CONVENTION: underscore at the end of variable name refers to time series
     def __init__(self):
         self.emailNotify = False
-        self.statesLog = [] # log for multiple runs
+        self.statesLog = [] # log for multiple runs (HIGH MEMORY COST!)
 
     def setEmail(self, emailFrom, emailPw, emailTo):
-        # set up email notifier
+        # set up email notifier of program progress (QUITE REDUNDANT!)
         self.emailNotify = True
         self.emailHandler = util.emailHandler(emailFrom, emailPw, emailTo)
+
+    # intrinsic dynamics ======================================================#
 
     @staticmethod
     @njit
     def intrinsicFunc_FHNfast(size,eps,x,y):
+        # FHN DYNAMICS
         # intrinsic dynamics (fast version)
         a = np.empty(size)
         for i in range(size):
@@ -208,6 +282,8 @@ class network(graph):
             a[i] = r[i]*x[i]*(1-x[i])
         return a
 
+    # coupling function =======================================================#
+
     @staticmethod
     @njit
     def couplingFunc_diffusive(x,y):
@@ -217,27 +293,28 @@ class network(graph):
     @staticmethod
     @njit
     def couplingFuncDerivY_diffusive(x,y):
-        # y-derivative of diffusive coupling function
+        # y-derivative of diffusive coupling function (used in calcInfoMatrix())
         return 1
 
     @staticmethod
     @njit
     def couplingFunc_synaptic(x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 20,1,1 ##
+        beta1,beta2,y0 = 20,1,1
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
     @staticmethod
     @njit
     def couplingFuncDerivY_synaptic(x,y):
-        # y-derivative of synaptic coupling function
-        beta1,beta2,y0 = 20,1,1 ##
+        # y-derivative of synaptic coupling function (used in calcInfoMatrix())
+        beta1,beta2,y0 = 20,1,1
         a = np.cosh(beta2*(y-y0))
         return beta2/beta1/(a*a)
 
-    # initialization ==========================================================#
+    # initialization FROM START ===============================================#
 
     def initDynamics_FHN(self, initStates, initStatesY, epsilon, alpha, noiseCovariance):
+        # FHN DYNAMICS
         # initialize node states and set intrinsic coef & noise cov
         print(' initializing dynamics ...')
         self.states_ = {i:[] for i in range(self.size)}
@@ -283,16 +360,17 @@ class network(graph):
         if np.allclose(self.noiseChol,self.noiseChol[0,0]*np.eye(self.size)):
             self.sigma = self.noiseChol[0,0]
 
-    # initialization from file ================================================#
+    # initialization FROM FILE ================================================#
 
     def continueDynamics_FHN(self, file, fileY, epsilon, alpha, noiseCovariance):
+        # FHN DYNAMICS
         # continue dynamics from read time series data
         print(' initializing dynamics from %s & %s ...'%(file,fileY))
         self.epsilon = epsilon
         self.alpha = alpha
         self.statesY = np.load(fileY) # fileY is npy file
         self.readDynamics(file)
-        self.setIntrinsicAndNoise([], noiseCovariance)
+        self.setIntrinsicAndNoise([],noiseCovariance)
 
     def continueDynamics(self, file, intrinsicCoef, noiseCovariance):
         # continue dynamics from read time series data
@@ -340,11 +418,18 @@ class network(graph):
     # generate dynamics =======================================================#
 
     def getStateChanges_FHNx(self):
+        # FHN DYNAMICS (x-dimension)
         # instantaneous node changes
+
+        #### IMPLEMENTATION 3 (WeightedCoupling) #### DIFFUSIVE COUPLING FUNC
         WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
             (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
             shape=(self.size,self.size)
         ))
+
+        #### IMPLEMENTATION 4 (WeightedCoupling) #### SYNAPTIC COUPLING FUNC
+        # myRow = self.couplingFunc_synaptic(None,self.states)
+        # WeightedCoupling = self.sparseCoupling.multiply(myRow)
 
         randomVector = np.random.normal(size=self.size)
 
@@ -355,6 +440,7 @@ class network(graph):
         return changes
 
     def getStateChanges_FHNy(self):
+        # FHN DYNAMICS (y-dimension)
         # instantaneous node changes
         return (self.states+self.alpha)*self.timeStep
 
@@ -362,34 +448,41 @@ class network(graph):
         # instantaneous node changes
         # changes as an np array
 
+        #### IMPLEMENTATION 1 (WeightedCoupling) #### STANDARD
         # WeightedCoupling = np.empty((self.size,self.size))
         # for i in range(self.size):
-        #     WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states) ##
+        #     WeightedCoupling[i] = self.couplingFunc_synaptic(self.states[i],self.states)
         # WeightedCoupling *= self.Coupling
 
+        #### IMPLEMENTATION 2 (WeightedCoupling) #### DEPRECATED
         # WeightedCoupling = self.sparseCoupling.multiply(outerSubtract(self.states,self.states))
+
+        #### IMPLEMENTATION 3 (WeightedCoupling) #### DIFFUSIVE COUPLING FUNC
         WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
             (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
             shape=(self.size,self.size)
         ))
 
+        #### IMPLEMENTATION 4 (WeightedCoupling) #### SYNAPTIC COUPLING FUNC
         # using feature of synaptic coupling function
         # myRow = self.couplingFunc_synaptic(None,self.states)
-        # WeightedCoupling = np.multiply(self.Coupling,myRow)
         # WeightedCoupling = self.sparseCoupling.multiply(myRow)
+        # WeightedCoupling = np.multiply(self.Coupling,myRow) # DEPRECATED
 
-        randomVector = np.random.normal(size=self.size) ##
-        # randomVector = np.random.exponential(3,size=self.size)*np.where(np.random.uniform(size=self.size)<0.5,-1,1)
+        randomVector = np.random.normal(size=self.size)
 
+        #### IMPLEMENTATION 1 (changes) #### STANDARD
         # changes = (self.intrinsicFunc(self.intrinsicCoef,self.states)+\
         #     WeightedCoupling.sum(axis=1))*self.timeStep+\
         #     self.noiseChol.dot(randomVector)*self.sqrtTimeStep
 
+        #### IMPLEMENTATION 2 (changes) #### IID NOISE
         # changes = (self.intrinsicFunc_fast(self.size,self.intrinsicCoef,self.states)+\
         #     WeightedCoupling.sum(axis=1))*self.timeStep+\
         #     self.sigma*randomVector*self.sqrtTimeStep
         #     # self.sigma*normalVector(size=self.size)*self.sqrtTimeStep
 
+        #### IMPLEMENTATION 3 (changes) #### IID NOISE & SPARSE COUPLINGS (VERY FAST FOR LARGE NETWORKS)
         changes = (self.intrinsicFunc_fast(self.size,self.intrinsicCoef,self.states)+\
             WeightedCoupling.sum(axis=1).A1)*self.timeStep+\
             self.sigma*randomVector*self.sqrtTimeStep
@@ -405,14 +498,15 @@ class network(graph):
         pbar = tqdm(total=totIter) # progress bar
         pbar.update(self.iter)
 
+        # DEPRECATED TIME COUNTER
         # startTimer = time()
 
         while self.iter<totIter:
-            #### FHN ####
+            #### FHN INTRINSIC DYNAMICS ####
             states_new = self.states+self.getStateChanges_FHNx()
             self.statesY += self.getStateChanges_FHNy()
             self.states = states_new
-            #### logistic ####
+            #### LOGISTIC INTRINSIC DYNAMICS ####
             # self.states += self.getStateChanges()
 
             for i in range(self.size):
@@ -423,6 +517,7 @@ class network(graph):
 
             if silent:
                 pbar.update()
+                # DEPRECATED TIME COUNTER
                 # print(' t = %7.2f | %c %.2f %%\r'%(self.time,util.progressBars[self.iter%4],100*self.time/self.endTime),end='')
             elif self.iter%100==0:
                 print(' t = %7.2f/%7.2f | '%(self.time,self.endTime)+\
@@ -435,11 +530,12 @@ class network(graph):
 
         pbar.close()
 
+        # DEPRECATED TIME COUNTER
         # endTimer = time()
         # print('\n runDynamics() takes %.2f seconds'%(endTimer-startTimer))
 
         self.states_np = np.array([self.states_[i] for i in range(self.size)])
-        self.statesLog.append(self.states_)
+        # self.statesLog.append(self.states_) # HIGH MEMORY COST!
 
     # post-dynamics processing ================================================#
 
@@ -450,8 +546,8 @@ class network(graph):
         self.iter -= transientSteps
         self.states_np = self.states_np[:,transientSteps:]
         del self.time_[:transientSteps]
-        # for i in range(self.size):
-        #     del self.states_[i][:transientSteps]
+        # optional because state dict is infrequently used for processing
+        # for i in range(self.size): del self.states_[i][:transientSteps]
 
     def setSteadyStates(self, file=None):
         # set steady states with a noise-free network
@@ -482,6 +578,7 @@ class network(graph):
 
     def calcStatesFluc(self):
         # compute mean & s.d. of fluctuations around steady states
+        # REQUIRE: steady states have to be computed or loaded first
         print(' computing mean & s.d. of fluctuations around steady states ...')
         self.statesFluc = self.states_np-self.steadyStates.reshape(-1,1) # fluc ard steady states
         self.flucMean = self.statesFluc.mean(axis=1)
@@ -492,24 +589,28 @@ class network(graph):
 
     def calcInfoMatrix(self):
         # compute information matrix of network (theoretical)
-        # diagonal entries not usable
+        # diagonal entries not usable (because inaccurate)
         print(' computing info matrix (Qij) ...')
 
+        #### IMPLEMENTATION 1 #### STANDARD
         # self.InfoMatrix = np.empty((self.size,self.size))
         # for i in range(self.size):
-        #     self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates) ##
+        #     self.InfoMatrix[i] = self.couplingFuncDerivY_synaptic(self.steadyStates[i],self.steadyStates)
         #     util.showProgress(i+1,self.size)
 
+        #### IMPLEMENTATION 2 #### DIFFUSIVE COUPLING FUNC
         myRow = self.couplingFuncDerivY_diffusive(None,self.steadyStates)
         self.InfoMatrix = self.sparseCoupling.multiply(myRow).A
 
+        #### IMPLEMENTATION 3 #### SYNAPTIC COUPLING FUNC
         # using feature of synaptic coupling function
         # myRow = self.couplingFuncDerivY_synaptic(None,self.steadyStates)
-        # self.InfoMatrix = np.multiply(self.Coupling,myRow)
         # self.InfoMatrix = self.sparseCoupling.multiply(myRow).A
+        # self.InfoMatrix = np.multiply(self.Coupling,myRow) # DEPRECATED
 
         if self.emailNotify: self.emailHandler.sendEmail('calcInfoMatrix() completes')
 
+    #### IMPLEMENTATION 1 #### STANDARD
     def timeCovarianceMatrix(self, shift=0):
         # compute time covariance matrix
         # shift = multiple of time step
@@ -524,10 +625,11 @@ class network(graph):
 
         return matrixSum/(iter-shift)
 
+    #### IMPLEMENTATION 2 #### CHUNKED CALCULATIONS (BEST)
     def printTimeCovOuterProdSum(self, shift, file):
         # print outer product sum (for computing time covariance matrix)
         # shift = multiple of time step
-        # this is SUGGESTED
+        # this is SUGGESTED (calculate outer product sum for each time chunk)
         print(' computing outer product sum and printing to %s ...'%file)
 
         matrixSum = 0
@@ -540,6 +642,7 @@ class network(graph):
 
         np.save(file,matrixSum)
 
+    #### IMPLEMENTATION 3 #### PARALLEL (MAY BE EVEN SLOWER THAN STANDARD!)
     def timeCovarianceMatrix_parallel(self, shift=0):
         # compute time covariance matrix
         # shift = multiple of time step
@@ -558,6 +661,7 @@ class network(graph):
 
         return matrixSum/(iter-shift)
 
+    #### IMPLEMENTATION 4 #### NJIT (MAY BE EVEN SLOWER THAN STANDARD!)
     @staticmethod
     @njit(parallel=True,nogil=True)
     def timeCovarianceMatrix_fast(shift, size, states_np, avgStates):
@@ -606,8 +710,9 @@ class network(graph):
             self.timeStep*np.max(np.imag(eigVal))<np.pi)
 
     def findPeaks(self, height, distance, iterSlice=None):
+        # COMMONLY USED!
         # find peaks with a defined threshold (height) & separation (distance) for all nodes
-        # peak indeices start at 0
+        # peak indices start at 0
         print(' finding peaks ...')
         if not iterSlice: iterSlice = slice(self.iter)
         self.peakHeight = height
@@ -618,7 +723,7 @@ class network(graph):
             self.peakDict[i] = peaks
             self.peakCount.append(len(peaks))
 
-    # plots ===================================================================#
+    # plots and outputs =======================================================#
 
     def plotInfoMatrix(self, file, title=None):
         # plot information matrix: theoretical vs empirical
@@ -664,6 +769,7 @@ class network(graph):
         plt.close()
 
     def plotDegreeStrengthDist(self, degreeFile, strengthFile, degreeTitle=None, strengthTitle=None):
+        # DEPENDS ONLY ON GRAPH NOT TIME SERIES
         # plot degree and strength distribution
         # require only graph (time series not necessary)
         print(' plotting degree & strength distribution to %s & %s ...'%(degreeFile,strengthFile))
@@ -701,8 +807,10 @@ class network(graph):
         fig.savefig(strengthFile)
         plt.close()
 
+    # DEPRECATED
     def plotStrengthDist(self, file):
-        # plot strength distribution
+        # DEPENDS ONLY ON GRAPH NOT TIME SERIES
+        # plot strength distribution (node classifications by signs of strengths)
         # require only graph (time series not necessary)
         print(' plotting log in- & out-strength distribution to %s & %s ...'%(file+'logInstren.png',file+'logOutstren.png'))
 
@@ -822,6 +930,7 @@ class network(graph):
         fig.savefig(strengthFile)
         plt.close()
 
+    # DEPRECATED
     def plotCrossSecDist(self, t, file, title=None, xlimRange=None, ylimRange=None):
         # plot cross-sectional distribution of fluctuations around steady states
         # i.e. distribution of all nodes at some time
@@ -848,6 +957,7 @@ class network(graph):
         plt.close()
 
     def plotDynamics(self, file, title=None, nodes=None, iterSlice=None, color=None, ylimRange=None, withSteadyStates=False):
+        # COMMONLY USED!
         # plot time series data to file
         print(' plotting dynamics to %s ...'%file)
 
@@ -890,6 +1000,7 @@ class network(graph):
         self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
 
     def printContFile_FHN(self, file, fileY):
+        # FHN DYNAMICS
         # print time series data to cont file (csv format)
         # NO NEED to prepend '(cont)' to file
         self.printDynamics('(cont)'+file,iterSlice=slice(-2,None))
@@ -917,6 +1028,7 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
+    # DEPRECATED
     def plotPeakDistInTime(self, file, bins, iterSlice=None):
         # plot distribution of peaks to file
         print(' plotting distribution of peaks in time to %s ...'%file)
@@ -936,6 +1048,7 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
+    # DEPRECATED
     def plotRaster(self, file, node, height, iterSlice=None, title=None):
         # plot raster plot to file
         print(' plotting raster plot to %s ...'%file)
@@ -952,19 +1065,22 @@ class network(graph):
         plt.close()
 
     def plotPeakCountDist(self, file, logProb=False, logPeakCount=False,
-        histogram=False, align='mid', bins=10):
+        histogram=False, align='mid', bins=10, standardize=False):
+        # COMMONLY USED!
         # plot disrtibution of peak count to file
         print(' plotting disrtibution of peak count to %s ...'%file)
         if logPeakCount: peakCount = np.log(self.peakCount[self.peakCount>0])
         else: peakCount = self.peakCount
+        mean = peakCount.mean()
+        sd = peakCount.std()
+        if standardize: peakCount = (peakCount-mean)/sd
         minPeak = np.min(peakCount)
         maxPeak = np.max(peakCount)
 
         fig = plt.figure()
-        mean = peakCount.mean()
-        sd = peakCount.std()
         x = np.linspace(minPeak,maxPeak,200)
-        plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'r--')
+        if standardize: plt.plot(x,norm(loc=0,scale=1).pdf(x),'r--')
+        else: plt.plot(x,norm(loc=mean,scale=sd).pdf(x),'r--')
         if histogram: plt.hist(peakCount,color='k',align=align,density=True,bins=bins)
         else:
             density = gaussian_kde(peakCount)
@@ -975,8 +1091,9 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
+    # DEPRECATED
     def plotPeakCountAgainstDegStren(self, file, logPeakCount=False):
-        # plot peak count against strengths to file
+        # plot peak count against strengths to file (node classifications by signs of strengths)
         # LATER: change to log-scale axis ticks
         print(' plotting peak count against strengths to %s ...'%(file+'(*)PeakCountAgainst*.png'))
         if logPeakCount: peakCount = np.log(self.peakCount)
@@ -1157,6 +1274,7 @@ def autocorr(x,t=1):
     # autocorrelation
     return np.corrcoef(x[:-t],x[t:])[0,1]
 
+# DEPRECATED
 def plotQQ(x,y,file,xlab,ylab,title=None):
     # QQ plot of two sets of data
     print(' plotting QQ plot to %s ...'%file)
