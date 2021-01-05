@@ -9,10 +9,30 @@ myNet = n.network()
 # myNet.loadGraph('DIV25_PREmethod')
 # myNet.loadNpGraph('')
 
+# myNet.readPeakTime('(neuron_FHN_synaptic_withNoise_sigma=2_e=0.1_a=0.95_0.01,1,0)PeakTime_t=0to1000_h=0.00_d=2000.txt',withIdx=True)
+myNet.readPeakTime('updatedDIV25_spks',withIdx=False)
+myNet.makeCoupling_FNCCH(10000) # use W=10000
+# np.save('DIV25_FNCCH.npy',myNet.Coupling)
+
+# f1 = open('(neuron_FHN_diffusive_withNoise_sigma=2_e=0.1_a=0.95)PeakTime_t=0to500_h=0.00_d=2000.txt')
+# f2 = open('(neuron_FHN_diffusive_withNoise_sigma=2_e=0.1_a=0.95)PeakTime_t=500to1000_h=0.00_d=2000.txt')
+# l1 = f1.readlines()
+# l2 = f2.readlines()
+#
+# d1 = {i:l1[i].rstrip('\n').split()[2:] for i in range(4095)}
+# d2 = {i:l2[i].rstrip('\n').split()[2:] for i in range(4095)}
+# for i in range(4095):
+#     for j,x in enumerate(d2[i]): d2[i][j] = str(10**6+int(x))
+#     d1[i].extend(d2[i])
+#
+# myNet.size = 4095
+# myNet.peakDict = d1
+# myNet.printPeakTime('(neuron_FHN_diffusive_withNoise_sigma=2_e=0.1_a=0.95)PeakTime_t=0to1000_h=0.00_d=2000.txt')
+
 #==============================================================================#
 #### read in peak count files (different dynamics) and compare distribution plots #### AD HOC
 
-# a = np.loadtxt('DIV25_spks',usecols=0)
+# a = np.load('')
 # b = np.load('')
 # c = np.load('')
 # a = (a-a.mean())/a.std()
@@ -21,7 +41,7 @@ myNet = n.network()
 #
 # from scipy.stats import norm,gaussian_kde
 # fig = plt.figure()
-# x = np.linspace(np.min(a),np.max(a),200)
+# x = np.linspace(-4,4,200)
 # plt.plot(x,norm(loc=0,scale=1).pdf(x),'r--')
 # density_a = gaussian_kde(a)
 # density_b = gaussian_kde(b)
@@ -30,7 +50,7 @@ myNet = n.network()
 # plt.plot(x,density_b(x),label='')
 # plt.plot(x,density_c(x),label='')
 # plt.xlabel('peak count')
-# plt.xlim(left=np.min(a),right=np.max(a))
+# plt.xlim(left=-4,right=4)
 # plt.legend()
 # fig.tight_layout()
 # fig.savefig('')
@@ -71,6 +91,7 @@ myNet = n.network()
 # from scipy.stats import skew,kurtosis
 # print(max(myNet.peakCount), min(myNet.peakCount), np.median(myNet.peakCount),
 #     np.mean(myNet.peakCount), skew(myNet.peakCount),kurtosis(myNet.peakCount))
+# myNet.plotPeakCountDist('',histogram=False,standardize=False)
 # myNet.plotPeakCountDist('',histogram=False,standardize=True)
 
 #==============================================================================#

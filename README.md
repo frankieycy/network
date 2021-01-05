@@ -1,6 +1,6 @@
 ## Neuronal Network Analysis
 
-* last update: 8/10/2020
+* last update: 5/1/2021
 * _the README just documents my work and is not meant to be self-contained_
 * reconstruct network from dynamics (time series data) of nodes
 * replicate neuron dynamics with an effective network model (with connectivity computed from an assumed model)
@@ -87,3 +87,11 @@
 ---
 
 * This marks the end of my FYP part I.
+
+---
+
+## Project 4 - (FYP) Network reconstruction
+
+* use the simulation data of the FHN model to compare the performance of two methods of network reconstruction:
+    - the covariance-relation method proposed and published in PRE, and
+    - the Functional Normalized Cross-Correlation Histogram (FNCCH) method

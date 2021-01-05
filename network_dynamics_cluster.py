@@ -3,6 +3,7 @@
 #==============================================================================#
 # Project 2 - (FYP) neuronal network
 # numba handles computationally intensive calculations
+import os,glob
 import util
 # import istarmap
 import pandas as pd
@@ -300,14 +301,14 @@ class network(graph):
     @njit
     def couplingFunc_synaptic(x,y):
         # synaptic coupling function
-        beta1,beta2,y0 = 20,1,1
+        beta1,beta2,y0 = 0.01,1,0
         return 1/beta1*(1+np.tanh(beta2*(y-y0)))
 
     @staticmethod
     @njit
     def couplingFuncDerivY_synaptic(x,y):
         # y-derivative of synaptic coupling function (used in calcInfoMatrix())
-        beta1,beta2,y0 = 20,1,1
+        beta1,beta2,y0 = 0.01,1,0
         a = np.cosh(beta2*(y-y0))
         return beta2/beta1/(a*a)
 
@@ -415,6 +416,51 @@ class network(graph):
         print(' printing dynamics to %s ...'%file)
         np.save(file,np.vstack((self.time_,self.states_np)).T)
 
+    # run program =============================================================#
+
+    def runInBatches(self, files, params, dt, start, end, step):
+        # FHN DYNAMICS
+        # run dynamics and save time series in batches
+        # files: [fileNameX, fileNameY]
+        # params: [epsilon, alpha, noiseCovariance, ic, icY] (include last two if start=0)
+        iter = int((end-start)/step)
+        for i in range(iter):
+            print(' <<<< running dynamics in batches >>>> %d/%d'%(i+1,iter))
+            if start+i*step==0: self.initDynamics_FHN(params[3],params[4],params[0],params[1],params[2])
+            else: self.continueDynamics_FHN('(cont)%s_%.1esteps.csv'%(files[0],start+i*step),'(cont)%s_%.1esteps.npy'%(files[1],start+i*step),
+                params[0],params[1],params[2])
+            self.runDynamics(dt,start+(i+1)*step)
+            self.saveNpDynamics('%s_%.1eto%.1esteps.npy'%(files[0],start+i*step,start+(i+1)*step))
+            self.printContFile_FHN('%s_%.1esteps.csv'%(files[0],start+(i+1)*step),'%s_%.1esteps.npy'%(files[1],start+(i+1)*step))
+
+    def findPeaksInBatches(self, file, peakFile, timeRange, h, d, batches=1):
+        # find peaks in batches
+        # NOTE: length(files) must be divisible by batches
+        # file: time series file pattern
+        # peakFile: peak count file name
+        files = glob.glob(file)
+        files.sort(key=lambda f: int(float(f[-16:-9]))) # f[-16:-9] is ending time step (scientific format)
+        batchFiles = len(files)//batches
+        batchTime = (timeRange[1]-timeRange[0])//batches
+        peakCounts = []
+        for i in range(batches):
+            print(' <<<< finding peaks in batches >>>> %d/%d'%(i+1,batches))
+            self.readDynamics(files[i*batchFiles:(i+1)*batchFiles])
+            self.findPeaks(height=h,distance=d)
+            peakCounts.append(np.array(self.peakCount))
+            np.save('%s_t=%dto%d_h=%.2f_d=%d.npy'%(peakFile,timeRange[0]+i*batchTime,timeRange[0]+(i+1)*batchTime,h,d),self.peakCount) # npy peak count
+            self.printPeakTime('%s_t=%dto%d_h=%.2f_d=%d.csv'%(peakFile,timeRange[0]+i*batchTime,timeRange[0]+(i+1)*batchTime,h,d)) # csv peak time
+        np.save('%s_t=%dto%d_h=%.2f_d=%d.npy'%(peakFile,timeRange[0],timeRange[1],h,d),sum(peakCounts))
+
+    def plotDynamicsForNodes(self, folder, file, nodes, iterSlice=None, ylimRange=None, withPeaks=False):
+        # plot time series for each node
+        # plots are stored in folder
+        if not os.path.exists(folder): os.mkdir(folder)
+        if withPeaks:
+            for i in nodes: self.plotDynamicsWithPeaks(i,folder+'/'+file+'_node%04d.png'%i,iterSlice=iterSlice,ylimRange=ylimRange)
+        else:
+            for i in nodes: self.plotDynamics(folder+'/'+file+'_node%04d.png'%i,nodes=[i],iterSlice=iterSlice,ylimRange=ylimRange,color='k')
+
     # generate dynamics =======================================================#
 
     def getStateChanges_FHNx(self):
@@ -422,14 +468,14 @@ class network(graph):
         # instantaneous node changes
 
         #### IMPLEMENTATION 3 (WeightedCoupling) #### DIFFUSIVE COUPLING FUNC
-        WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
-            (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
-            shape=(self.size,self.size)
-        ))
+        # WeightedCoupling = self.sparseCoupling.multiply(csr_matrix(
+        #     (self.states[self.couplingNonZeroIdx[1]]-self.states[self.couplingNonZeroIdx[0]],self.couplingNonZeroIdx),
+        #     shape=(self.size,self.size)
+        # ))
 
         #### IMPLEMENTATION 4 (WeightedCoupling) #### SYNAPTIC COUPLING FUNC
-        # myRow = self.couplingFunc_synaptic(None,self.states)
-        # WeightedCoupling = self.sparseCoupling.multiply(myRow)
+        myRow = self.couplingFunc_synaptic(None,self.states)
+        WeightedCoupling = self.sparseCoupling.multiply(myRow)
 
         randomVector = np.random.normal(size=self.size)
 
@@ -722,6 +768,128 @@ class network(graph):
             peaks,_ = find_peaks(self.states_np[i,iterSlice],height=height,distance=distance)
             self.peakDict[i] = peaks
             self.peakCount.append(len(peaks))
+
+    def readPeakTime(self, file, withIdx=True):
+        with open(file) as f:
+            peakTime = f.readlines()
+        self.size = len(peakTime)
+        self.peakDict = {i: [int(t) for t in peakTime[i].split()[(2 if withIdx else 1):]] for i in range(self.size)}
+
+    def printPeakTime(self, file):
+        # print peak time (peakDict) to file
+        print(' printing peak time to %s ...'%file)
+        f = open(file,'w')
+        for i in range(self.size): f.write(str(i)+' '+str(len(self.peakDict[i]))+' '+' '.join(str(x) for x in self.peakDict[i])+'\n')
+        f.close()
+
+    # cross-correlation histogram =============================================#
+
+    def setPeakDictBinary(self, w):
+        # set global peak dict (avoid re-definitions)
+        # for use in IMPLEMENTATION 3
+        self.Tau = np.arange(-w/2,w/2+1,dtype=int)
+        N = max([x[-1] for x in self.peakDict.values() if x])+w+1
+        self.peakDictShifted = {i:np.array(self.peakDict[i])+w//2 for i in range(self.size)} # peak time shifted by w/2
+        self.peakDictBinary = np.zeros((self.size,N)) # binary peak data (1 indicates spiking activity)
+        for i in range(self.size):
+            if self.peakDict[i]: self.peakDictBinary[i,self.peakDictShifted[i]] = 1
+
+        # sparse representation of peak dict (INEFFICIENT)
+        # row_idx = []
+        # col_idx = []
+        # for i in range(self.size):
+        #     row_idx.extend([i]*len(self.peakDictShifted[i]))
+        #     col_idx.extend(self.peakDictShifted[i])
+        # data = np.ones(len(row_idx))
+        # self.peakDictBinary = csr_matrix((data,(row_idx,col_idx)),shape=(self.size,N))
+
+    def crossCorr(self, i, j, tau):
+        # compute cross-correlation btw node i and j with lag tau
+        # INEFFICIENT: not to be used in a loop
+        ti = self.peakDict[i]
+        tj = self.peakDict[j]
+        if not ti or not tj: return 0
+        N = max(ti+tj)+1
+        fj = np.zeros(N)
+        fj[tj] = 1
+        t = np.array(ti)+tau
+        return fj[t[(t>=0)&(t<N)]].sum()/np.sqrt(len(ti)*len(tj))
+
+    def crossCorrWindow(self, i, j, w):
+        # IMPROVE: this function is the most computational costly
+        #### IMPLEMENTATION 1 #### (INEFFICIENT)
+        # Tau = np.arange(-w/2,w/2+1,dtype=int)
+        # return np.array([self.crossCorr(i,j,tau) for tau in Tau])
+
+        #### IMPLEMENTATION 2 #### LOCAL PEAKDICT
+        ti = self.peakDict[i]
+        tj = self.peakDict[j]
+        if not ti or not tj: return [0]*(w+1)
+        N = max(ti+tj)+w+1
+        ti = np.array(ti)+w//2
+        tj = np.array(tj)+w//2
+        fj = np.zeros(N)
+        fj[tj] = 1
+        Tau = np.arange(-w/2,w/2+1,dtype=int)
+        a = 1/np.sqrt(len(ti)*len(tj))
+        C = [fj[ti+tau].sum() for tau in Tau]
+        return a*np.array(C)
+
+        #### IMPLEMENTATION 3 #### GLOBAL PEAKDICT (SLOWER THAN IMP 2)
+        # ti = self.peakDictShifted[i]
+        # tj = self.peakDictShifted[j]
+        # if len(ti)==0 or len(tj)==0: return [0]*(w+1)
+        # a = 1/np.sqrt(len(ti)*len(tj))
+        # C = [self.peakDictBinary[j,ti+tau].sum() for tau in self.Tau]
+        # return a*np.array(C)
+
+    def crossCorrWindowNormalized(self, i, j, w):
+        # normalize cross-correlation by subtracting the mean
+        C = self.crossCorrWindow(i,j,w)
+        return C-np.mean(C)
+
+    def makeCoupling_FNCCH(self, w):
+        # network reconstruction via FNCCH method
+        n = self.size
+        self.Coupling = np.zeros((n,n))
+        C_exc = []
+        C_inh = []
+        idx_exc = []
+        idx_inh = []
+        pbar = tqdm(total=n*n-n)
+        for i in range(self.size):
+            for j in range(self.size):
+                if i==j: continue
+                C = self.crossCorrWindowNormalized(i,j,w) # most computational costly
+                t = np.argmax(abs(C))
+                if C[t]>0:
+                    idx_exc.append((i,j))
+                    C_exc.append(C[t])
+                else:
+                    idx_inh.append((i,j))
+                    C_inh.append(C[t])
+                pbar.update()
+        pbar.close()
+        absC_exc = C_exc
+        absC_inh = abs(C_inh)
+        thres_exc = np.mean(absC_exc)+2*np.std(absC_exc)
+        thres_inh = np.mean(absC_inh)+1*np.std(absC_inh)
+        C_exc = C_exc[np.argwhere(absC_exc>thres_exc)]
+        C_inh = C_inh[np.argwhere(absC_inh>thres_inh)]
+        self.Coupling[idx_exc] = C_exc
+        self.Coupling[idx_inh] = C_inh
+
+    def plotCrossCorr(self, file, i, j, w):
+        # plot cross-correlation histogram over tau=[-w/2,w/2]
+        tau = np.arange(-w/2,w/2+1,dtype=int)
+        C = myNet.crossCorrWindowNormalized(i,j,w)
+        fig = plt.figure()
+        plt.scatter(tau,C,c='k',s=.5)
+        plt.xlabel(r'$\tau$')
+        plt.ylabel('cross-correlation')
+        fig.tight_layout()
+        fig.savefig(file)
+        plt.close()
 
     # plots and outputs =======================================================#
 
@@ -1048,15 +1216,14 @@ class network(graph):
         fig.savefig(file)
         plt.close()
 
-    # DEPRECATED
-    def plotRaster(self, file, node, height, iterSlice=None, title=None):
+    def plotRaster(self, file, node, timeRange=None, title=None):
         # plot raster plot to file
         print(' plotting raster plot to %s ...'%file)
-        if not iterSlice: iterSlice = slice(self.iter)
-        raster = self.states_np[node,iterSlice]>height
-
         fig = plt.figure(figsize=(12,6))
-        plt.imshow(raster,cmap='Greys',aspect='auto')
+        for i in node:
+            peakTime = np.array(self.peakDict[i])
+            if timeRange: peakTime = peakTime[(peakTime>timeRange[0])*(peakTime<timeRange[1])]
+            plt.scatter(peakTime,[i]*len(peakTime),s=0.1,c='k')
         if title: plt.title(title)
         plt.xlabel('time $t$')
         plt.ylabel('node index')
@@ -1298,6 +1465,28 @@ def plotQQ(x,y,file,xlab,ylab,title=None):
     if title: plt.title(title)
     plt.xlabel(xlab)
     plt.ylabel(ylab)
+    fig.tight_layout()
+    fig.savefig(file)
+    plt.close()
+
+def plotQuantileFraction(x,file,title=None,lab=None):
+    # fraction of sum of values accounted for by quantiles (dominance plot)
+    print(' plotting quantile-fraction to %s ...'%file)
+    fig = plt.figure()
+    for idx,y in enumerate(x):
+        n = len(y)
+        S = sum(y)
+        y[::-1].sort()
+        f = [i/n for i in range(n+1)]
+        s = [y[0]/S]
+        for i in range(1,n): s.append(s[i-1]+y[i]/S)
+        # s = [sum(y[:i])/S for i in range(n+1)]
+        if not lab: plot(f,s)
+        else: plt.plot(f,s,label=lab[idx])
+    plt.xlim((0,1))
+    plt.ylim((0,1))
+    plt.legend()
+    if title: plt.title(title)
     fig.tight_layout()
     fig.savefig(file)
     plt.close()
